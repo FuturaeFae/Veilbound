@@ -60,6 +60,36 @@ jobs:
           unzip -t Veilbound-0.1.37-dev.jar
           sha256sum Veilbound-0.1.37-dev.jar > Veilbound-0.1.37-dev-SHA256SUMS.txt
 
+      - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke-server
+          cd smoke-server
+          curl --fail --location --retry 3 --output neoforge-installer.jar \
+            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          mkdir -p mods
+          cp ../Veilbound-0.1.37-dev.jar mods/
+          printf 'eula=true\n' > eula.txt
+          printf 'online-mode=false\n' > server.properties
+          chmod +x run.sh
+          set +e
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.37-dev-server-smoke.log 2>&1
+          SERVER_RC=$?
+          set -e
+          if [ -f logs/latest.log ]; then
+            cat logs/latest.log
+          else
+            cat ../Veilbound-0.1.37-dev-server-smoke.log
+          fi
+          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
+            echo 'VEILBOUND_SERVER_SMOKE=PASS'
+          else
+            echo "VEILBOUND_SERVER_SMOKE=FAIL rc=${SERVER_RC}" >&2
+            exit 1
+          fi
+
       - name: Upload test build
         uses: actions/upload-artifact@v4
         with:
@@ -67,5 +97,6 @@ jobs:
           path: |
             Veilbound-0.1.37-dev.jar
             Veilbound-0.1.37-dev-SHA256SUMS.txt
+            Veilbound-0.1.37-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
