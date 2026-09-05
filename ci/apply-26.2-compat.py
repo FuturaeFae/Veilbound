@@ -64,3 +64,35 @@ if count != 3:
 p.write_text(s.replace(old, 'net.minecraft.world.level.LevelAccessor level,'))
 
 print('Applied Minecraft/NeoForge 26.2 compatibility pass 1')
+
+# Second compile pass: current 26.2 server/registry accessors plus two internal record accessor typos.
+replacements = {
+    'dev/futurae/veilbound/platform/neoforge/threshold/NeoForgeThresholdDeactivationCoordinator.java': [
+        ('breaker.getServer()', 'breaker.level().getServer()'),
+    ],
+    'dev/futurae/veilbound/platform/neoforge/threshold/NeoForgeThresholdPortalTransit.java': [
+        ('player.getServer()', 'player.level().getServer()'),
+    ],
+    'dev/futurae/veilbound/platform/neoforge/NeoForgeMemoryManagementController.java': [
+        ('definition.prerequisites()', 'definition.prerequisiteMemoryIds()'),
+    ],
+    'dev/futurae/veilbound/platform/neoforge/NeoForgeProjectEMatterSeeder.java': [
+        ('holder.key().identifier().toString()', 'holder.getRegisteredName()'),
+    ],
+    'dev/futurae/veilbound/block/entity/OntologicalHarvesterBlockEntity.java': [
+        ('plan.potentialProduced()', 'plan.potential()'),
+    ],
+    'dev/futurae/veilbound/platform/neoforge/world/VeilboundDomainLevelData.java': [
+        ('server.overworld().getLevelData());', '(net.minecraft.world.level.storage.ServerLevelData) server.overworld().getLevelData());'),
+    ],
+}
+for rel, pairs in replacements.items():
+    p = java / rel
+    s = p.read_text()
+    for old, new in pairs:
+        if old not in s:
+            raise SystemExit(f'Expected pass-2 source not found in {rel}: {old}')
+        s = s.replace(old, new)
+    p.write_text(s)
+
+print('Applied Minecraft/NeoForge 26.2 compatibility pass 2')
