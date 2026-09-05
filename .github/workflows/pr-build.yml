@@ -27,6 +27,9 @@ jobs:
           test -d Veilbound-0.1.37-dev-source/src/main/java
           test -d Veilbound-0.1.37-dev-source/src/main/resources
 
+      - name: Apply Minecraft 26.2 compatibility fixes
+        run: python3 ci/apply-26.2-compat.py Veilbound-0.1.37-dev-source
+
       - name: Set up Java 25
         uses: actions/setup-java@v4
         with:
@@ -55,7 +58,6 @@ jobs:
           test -n "$JAR"
           cp "$JAR" Veilbound-0.1.37-dev.jar
           unzip -t Veilbound-0.1.37-dev.jar
-          test -f Veilbound-0.1.37-dev.jar
           sha256sum Veilbound-0.1.37-dev.jar > Veilbound-0.1.37-dev-SHA256SUMS.txt
 
       - name: Upload test build
