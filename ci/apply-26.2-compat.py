@@ -116,3 +116,17 @@ if 'addModdingDependenciesTo sourceSets.test' not in s:
     s = s.replace(anchor, replacement)
 build.write_text(s)
 print('Attached Minecraft/NeoForge modding dependencies to the test source set')
+
+# Gradle 9 fails Test tasks when test sources exist but no JUnit/TestNG tests are discovered.
+# Veilbound's regression suite is deliberately executable main()-based self-tests and is run separately.
+build = root / 'build.gradle'
+s = build.read_text()
+block = '''
+tasks.withType(AbstractTestTask).configureEach {
+    failOnNoDiscoveredTests = false
+}
+'''
+if 'failOnNoDiscoveredTests = false' not in s:
+    s += block
+build.write_text(s)
+print('Configured Gradle 9 for Veilbound main-method self-test sources')
