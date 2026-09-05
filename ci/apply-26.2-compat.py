@@ -96,3 +96,23 @@ for rel, pairs in replacements.items():
     p.write_text(s)
 
 print('Applied Minecraft/NeoForge 26.2 compatibility pass 2')
+
+# The Gradle test source set references Minecraft classes in DefinitionPathSelfTest.
+# ModDevGradle only attaches its modding dependencies to additional source sets when requested.
+build = root / 'build.gradle'
+s = build.read_text()
+anchor = '''    mods {
+        veilbound {
+            sourceSet sourceSets.main
+        }
+    }
+'''
+replacement = anchor + '''
+    addModdingDependenciesTo sourceSets.test
+'''
+if anchor not in s:
+    raise SystemExit('build.gradle mods anchor missing for test modding dependencies')
+if 'addModdingDependenciesTo sourceSets.test' not in s:
+    s = s.replace(anchor, replacement)
+build.write_text(s)
+print('Attached Minecraft/NeoForge modding dependencies to the test source set')
