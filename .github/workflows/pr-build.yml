@@ -29,15 +29,20 @@ jobs:
           test -d Veilbound-0.1.37-dev-source/src/main/java
           python3 apply-26.2-compat.py Veilbound-0.1.37-dev-source
 
-      - name: Reconstruct and apply 0.1.48 compile overlay
+      - name: Reconstruct and apply 0.1.48 overlays
         shell: bash
         run: |
           set -euo pipefail
           cat ci-0148/part-*.b64 | base64 --decode > Veilbound-0.1.48-compile-overlay.tar.xz
           echo "f314493cd063871026ce4d0907a8f582d43f09942db355065f551acd8199e710  Veilbound-0.1.48-compile-overlay.tar.xz" | sha256sum -c -
           tar -xJf Veilbound-0.1.48-compile-overlay.tar.xz -C Veilbound-0.1.37-dev-source
+          base64 --decode ci-0148/resources.b64 > Veilbound-0.1.48-resource-overlay.tar.xz
+          echo "80efff69a0e8ee9016079940af4647dfb9b1892eed7933e2ba627000c58449a5  Veilbound-0.1.48-resource-overlay.tar.xz" | sha256sum -c -
+          tar -xJf Veilbound-0.1.48-resource-overlay.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
           grep -q '^mod_version=0.1.48-dev$' Veilbound-0.1.37-dev-source/gradle.properties
           test -f Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
+          grep -q 'EntityVeilBoundaryCollisionMixin' Veilbound-0.1.37-dev-source/src/main/resources/veilbound.mixins.json
+          test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh
 
       - name: Set up Java 25
         uses: actions/setup-java@v4
@@ -60,9 +65,13 @@ jobs:
           set -euo pipefail
           JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.48-dev-compiled.jar
-          unzip -t Veilbound-0.1.48-dev-compiled.jar
-          sha256sum Veilbound-0.1.48-dev-compiled.jar > Veilbound-0.1.48-dev-compiled-SHA256SUMS.txt
+          cp "$JAR" Veilbound-0.1.48-dev.jar
+          unzip -t Veilbound-0.1.48-dev.jar
+          unzip -p Veilbound-0.1.48-dev.jar META-INF/neoforge.mods.toml | grep -q 'version="0.1.48-dev"'
+          unzip -p Veilbound-0.1.48-dev.jar veilbound.mixins.json | grep -q 'EntityVeilBoundaryCollisionMixin'
+          unzip -l Veilbound-0.1.48-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary_fog.fsh'
+          unzip -l Veilbound-0.1.48-dev.jar | grep -q 'dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.class'
+          sha256sum Veilbound-0.1.48-dev.jar > Veilbound-0.1.48-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
         shell: bash
@@ -74,7 +83,7 @@ jobs:
             https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
-          cp ../Veilbound-0.1.48-dev-compiled.jar mods/
+          cp ../Veilbound-0.1.48-dev.jar mods/
           printf 'eula=true\n' > eula.txt
           printf 'online-mode=false\n' > server.properties
           chmod +x run.sh
@@ -97,10 +106,10 @@ jobs:
       - name: Upload compiler artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.48-dev-compiled
+          name: Veilbound-0.1.48-dev-final
           path: |
-            Veilbound-0.1.48-dev-compiled.jar
-            Veilbound-0.1.48-dev-compiled-SHA256SUMS.txt
+            Veilbound-0.1.48-dev.jar
+            Veilbound-0.1.48-dev-SHA256SUMS.txt
             Veilbound-0.1.48-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
