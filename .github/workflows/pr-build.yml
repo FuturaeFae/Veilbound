@@ -36,7 +36,6 @@ jobs:
           cp -R /tmp/vb138/ci/overlays/0138/src/. Veilbound-0.1.37-dev-source/src/
           python3 ci/0138-render-compat.py Veilbound-0.1.37-dev-source
           python3 ci/0138-collision-compat.py Veilbound-0.1.37-dev-source
-          grep -q '^mod_version=0.1.38-dev$' Veilbound-0.1.37-dev-source/gradle.properties
           grep -q 'EntityVeilBoundaryCollisionMixin' Veilbound-0.1.37-dev-source/src/main/resources/veilbound.mixins.json
           grep -q 'method = "getEntityCollisions"' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/platform/neoforge/mixin/EntityVeilBoundaryCollisionMixin.java
           test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.vsh
@@ -44,6 +43,21 @@ jobs:
 
       - name: Apply Minecraft 26.2 compatibility fixes
         run: python3 ci/apply-26.2-compat.py Veilbound-0.1.37-dev-source
+
+      - name: Apply 0.1.39 live boundary repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "e479fb486538ed8fde15f261555bbe32298d32eb910282ad7ba37c404031a7bd  ci/0139-overlay.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/vb139
+          tar -xzf ci/0139-overlay.tar.gz -C /tmp/vb139
+          cp -R /tmp/vb139/. Veilbound-0.1.37-dev-source/
+          grep -q '^mod_version=0.1.39-dev$' Veilbound-0.1.37-dev-source/gradle.properties
+          grep -q 'new DomainBounds(minX, minY, minZ, maxX, maxY, maxZ)' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/network/VeilBoundarySnapshotPayload.java
+          grep -q 'Shapes.joinIsNotEmpty(shape, entityShape, BooleanOp.AND)' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/boundary/VeilBoundaryCollisionState.java
+          grep -q 'RenderTypes.endPortal()' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderer.java
+          grep -q 'onExtractLevelRenderState' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/VeilboundClient.java
+          test -f Veilbound-0.1.37-dev-source/src/test/java/dev/futurae/veilbound/network/VeilBoundarySnapshotPayloadSelfTest.java
 
       - name: Set up Java 25
         uses: actions/setup-java@v4
@@ -61,7 +75,7 @@ jobs:
           java -version
           gradle --version
 
-      - name: Build against NeoForge 26.2
+      - name: Build and run boundary regression against NeoForge 26.2
         working-directory: Veilbound-0.1.37-dev-source
         run: gradle --no-daemon --stacktrace build
 
@@ -71,13 +85,14 @@ jobs:
           set -euo pipefail
           JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.38-dev.jar
-          unzip -t Veilbound-0.1.38-dev.jar
-          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'EntityVeilBoundaryCollisionMixin.class'
-          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'VeilBoundarySnapshotPayload.class'
-          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.vsh'
-          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.fsh'
-          sha256sum Veilbound-0.1.38-dev.jar > Veilbound-0.1.38-dev-SHA256SUMS.txt
+          cp "$JAR" Veilbound-0.1.39-dev.jar
+          unzip -t Veilbound-0.1.39-dev.jar
+          unzip -l Veilbound-0.1.39-dev.jar | grep -q 'EntityVeilBoundaryCollisionMixin.class'
+          unzip -l Veilbound-0.1.39-dev.jar | grep -q 'VeilBoundarySnapshotPayload.class'
+          unzip -l Veilbound-0.1.39-dev.jar | grep -q 'VeilBoundaryRenderer.class'
+          unzip -l Veilbound-0.1.39-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.vsh'
+          unzip -l Veilbound-0.1.39-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.fsh'
+          sha256sum Veilbound-0.1.39-dev.jar > Veilbound-0.1.39-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
         shell: bash
@@ -89,18 +104,18 @@ jobs:
             https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
-          cp ../Veilbound-0.1.38-dev.jar mods/
+          cp ../Veilbound-0.1.39-dev.jar mods/
           printf 'eula=true\n' > eula.txt
           printf 'online-mode=false\n' > server.properties
           chmod +x run.sh
           set +e
-          timeout 120s ./run.sh nogui > ../Veilbound-0.1.38-dev-server-smoke.log 2>&1
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.39-dev-server-smoke.log 2>&1
           SERVER_RC=$?
           set -e
           if [ -f logs/latest.log ]; then
             cat logs/latest.log
           else
-            cat ../Veilbound-0.1.38-dev-server-smoke.log
+            cat ../Veilbound-0.1.39-dev-server-smoke.log
           fi
           if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
             echo 'VEILBOUND_SERVER_SMOKE=PASS'
@@ -112,10 +127,10 @@ jobs:
       - name: Upload test build
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.38-dev-test-build
+          name: Veilbound-0.1.39-dev-live-boundary-fix
           path: |
-            Veilbound-0.1.38-dev.jar
-            Veilbound-0.1.38-dev-SHA256SUMS.txt
-            Veilbound-0.1.38-dev-server-smoke.log
+            Veilbound-0.1.39-dev.jar
+            Veilbound-0.1.39-dev-SHA256SUMS.txt
+            Veilbound-0.1.39-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
