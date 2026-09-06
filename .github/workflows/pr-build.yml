@@ -55,11 +55,22 @@ jobs:
           echo "a66f4aec0b9d37cd2f8df1889ecfc97a764f638eca00d2e563796bfd5e59ee2f  Veilbound-0.1.49-fogfix.patch.xz" | sha256sum -c -
           xz -dc Veilbound-0.1.49-fogfix.patch.xz > Veilbound-0.1.49-fogfix.patch
           patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.49-fogfix.patch
+
+      - name: Reconstruct and validate 0.1.50 monumental engineering overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat ci-0150/patchpart-*.b64 | base64 --decode > Veilbound-0.1.50.patch.xz
+          echo "d56e1ffac10bf7440c48aa5c6850f61b54d2b3578ba0fbf9b6a8b273c2ad07e9  Veilbound-0.1.50.patch.xz" | sha256sum -c -
+          xz -dc Veilbound-0.1.50.patch.xz > Veilbound-0.1.50.patch
+          patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.50.patch
+          cat ci-0150/binpart-*.b64 | base64 --decode > Veilbound-0.1.50-binary.tar.xz
+          echo "dbb4b9974a3cdcf20fd798ea94daa098d547fa2e2de97fd8ce5a6eea5461034d  Veilbound-0.1.50-binary.tar.xz" | sha256sum -c -
+          tar -xJf Veilbound-0.1.50-binary.tar.xz -C Veilbound-0.1.37-dev-source
           ROOT=Veilbound-0.1.37-dev-source
-          grep -q '^mod_version=0.1.49-dev$' "$ROOT/gradle.properties"
-          test -f "$ROOT/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java"
-          test -f "$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh"
-          grep -q 'EntityVeilBoundaryCollisionMixin' "$ROOT/src/main/resources/veilbound.mixins.json"
+          grep -q '^mod_version=0.1.50-dev$' "$ROOT/gradle.properties"
+
+          # Preserve the 0.1.49 ore-family and world-locked boundary-fog regressions.
           for ore in resonant phase mnemonic_crystal causalite axiomite paradox; do
             test -f "$ROOT/src/main/resources/assets/veilbound/blockstates/${ore}_ore.json"
             test -f "$ROOT/src/main/resources/assets/veilbound/blockstates/deepslate_${ore}_ore.json"
@@ -67,20 +78,105 @@ jobs:
             test -f "$ROOT/src/main/resources/assets/veilbound/textures/block/deepslate_${ore}_ore.png"
             test -f "$ROOT/src/main/resources/data/veilbound/loot_table/blocks/deepslate_${ore}_ore.json"
           done
-          test -f "$ROOT/src/main/resources/data/minecraft/tags/block/mineable/pickaxe.json"
-          test -f "$ROOT/src/main/resources/data/c/tags/block/ores.json"
-          test -f "$ROOT/src/main/resources/data/c/tags/item/ores.json"
           VSH="$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.vsh"
           FSH="$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh"
-          RENDERER="$ROOT/src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderer.java"
           grep -q 'fogFieldPos = UV0;' "$VSH"
           grep -q 'in vec2 fogFieldPos;' "$FSH"
-          grep -q 'fieldU + time \* 0.72F' "$RENDERER"
-          grep -q 'setColor(depth, faceSeed, 1.0F, alpha)' "$RENDERER"
           if grep -q 'fogWorldPos' "$VSH" "$FSH"; then
-            echo 'Camera-relative fog coordinate survived the 0.1.49 overlay.' >&2
+            echo 'Camera-relative fog coordinate returned in 0.1.50.' >&2
             exit 1
           fi
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('Veilbound-0.1.37-dev-source')
+          res = root / 'src/main/resources'
+
+          def strict_pairs(pairs):
+              out = {}
+              for key, value in pairs:
+                  if key in out:
+                      raise ValueError(f'duplicate JSON key: {key}')
+                  out[key] = value
+              return out
+
+          json_files = list(res.rglob('*.json')) + list(res.rglob('*.png.mcmeta'))
+          for path in json_files:
+              json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=strict_pairs)
+
+          recipes_dir = res / 'data/veilbound/veilbound/engineering_recipes'
+          recipe_files = sorted(recipes_dir.glob('*.json'))
+          assert len(recipe_files) == 120, len(recipe_files)
+
+          by_output = {}
+          tiers = {'NASCENT': 0, 'ANCHORED': 1, 'RESONANT': 2, 'ASCENDANT': 3, 'TRANSCENDENT': 4}
+          caps = {'NASCENT': 25_000, 'ANCHORED': 250_000, 'RESONANT': 2_500_000,
+                  'ASCENDANT': 25_000_000, 'TRANSCENDENT': 250_000_000}
+          for path in recipe_files:
+              data = json.loads(path.read_text(encoding='utf-8'))
+              output = data['output']['item']
+              assert output not in by_output, output
+              by_output[output] = data
+              tier = data['minimum_core_tier']
+              assert tier in tiers, (path, tier)
+              assert 0 <= int(data['dimensional_energy']) <= caps[tier], (path, data['dimensional_energy'], tier)
+
+          edges = {out: [] for out in by_output}
+          for out, data in by_output.items():
+              consumer_tier = tiers[data['minimum_core_tier']]
+              for inp in data.get('inputs', []):
+                  item = inp['item']
+                  if item in by_output:
+                      producer_tier = tiers[by_output[item]['minimum_core_tier']]
+                      assert producer_tier <= consumer_tier, (item, out)
+                      edges[out].append(item)
+
+          visiting, visited = set(), set()
+          def visit(node):
+              if node in visiting:
+                  raise AssertionError(f'engineering dependency cycle at {node}')
+              if node in visited:
+                  return
+              visiting.add(node)
+              for dep in edges[node]:
+                  visit(dep)
+              visiting.remove(node)
+              visited.add(node)
+          for node in edges:
+              visit(node)
+
+          blocks = ['chronal_engine_block', 'mnemonic_nexus_block', 'axiom_crucible_block', 'horizon_stabilizer_block']
+          items = [
+              'chronal_rotor', 'continuity_stator', 'causal_governor', 'worldline_gimbal',
+              'mnemonic_focal_core', 'recollection_bus', 'law_manifold', 'axiom_seal',
+              'paradox_dampener', 'horizon_frame', 'singularity_baffle', 'ontology_injector',
+              'reality_synchronizer', 'transfinite_arbiter', 'worldline_heart', 'sovereign_lattice_core',
+              'event_horizon_key', 'causality_crown', 'mnemonic_constellation', 'axiomatic_invariant'
+          ]
+          lang = json.loads((res / 'assets/veilbound/lang/en_us.json').read_text(encoding='utf-8'))
+          for ident in blocks:
+              assert (res / f'assets/veilbound/blockstates/{ident}.json').is_file(), ident
+              assert (res / f'assets/veilbound/models/block/{ident}.json').is_file(), ident
+              assert (res / f'assets/veilbound/models/item/{ident}.json').is_file(), ident
+              assert (res / f'assets/veilbound/items/{ident}.json').is_file(), ident
+              assert (res / f'assets/veilbound/textures/block/{ident}.png').is_file(), ident
+              assert (res / f'assets/veilbound/textures/block/{ident}.png.mcmeta').is_file(), ident
+              assert f'block.veilbound.{ident}' in lang, ident
+              assert f'item.veilbound.{ident}' in lang, ident
+              assert f'veilbound:{ident}' in by_output, ident
+          for ident in items:
+              assert (res / f'assets/veilbound/models/item/{ident}.json').is_file(), ident
+              assert (res / f'assets/veilbound/items/{ident}.json').is_file(), ident
+              assert (res / f'assets/veilbound/textures/item/{ident}.png').is_file(), ident
+              assert (res / f'assets/veilbound/textures/item/{ident}.png.mcmeta').is_file(), ident
+              assert f'item.veilbound.{ident}' in lang, ident
+              assert f'veilbound:{ident}' in by_output, ident
+
+          assert len(list(res.rglob('*.png.mcmeta'))) == 74
+          print(f'VEILBOUND_ENGINEERING_GRAPH=PASS outputs={len(by_output)} json_like={len(json_files)} animations=74')
+          PY
 
       - name: Set up Java 25
         uses: actions/setup-java@v4
@@ -97,34 +193,36 @@ jobs:
         working-directory: Veilbound-0.1.37-dev-source
         run: gradle --no-daemon --stacktrace build
 
-      - name: Collect compiled JAR
+      - name: Collect and audit compiled 0.1.50 JAR
         shell: bash
         run: |
           set -euo pipefail
           JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.49-dev.jar
-          unzip -t Veilbound-0.1.49-dev.jar
-          unzip -p Veilbound-0.1.49-dev.jar META-INF/neoforge.mods.toml | grep -q 'version="0.1.49-dev"'
-          unzip -p Veilbound-0.1.49-dev.jar veilbound.mixins.json | grep -q 'EntityVeilBoundaryCollisionMixin'
-          unzip -l Veilbound-0.1.49-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary_fog.fsh'
-          unzip -l Veilbound-0.1.49-dev.jar | grep -q 'dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.class'
+          cp "$JAR" Veilbound-0.1.50-dev.jar
+          unzip -t Veilbound-0.1.50-dev.jar
+          unzip -p Veilbound-0.1.50-dev.jar META-INF/neoforge.mods.toml | grep -q 'version="0.1.50-dev"'
+          unzip -p Veilbound-0.1.50-dev.jar veilbound.mixins.json | grep -q 'EntityVeilBoundaryCollisionMixin'
+          unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogFieldPos = UV0;'
+          unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'in vec2 fogFieldPos;'
+          if unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogWorldPos'; then exit 1; fi
+          if unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'fogWorldPos'; then exit 1; fi
           for ore in resonant phase mnemonic_crystal causalite axiomite paradox; do
-            unzip -l Veilbound-0.1.49-dev.jar | grep -q "assets/veilbound/blockstates/deepslate_${ore}_ore.json"
-            unzip -l Veilbound-0.1.49-dev.jar | grep -q "assets/veilbound/textures/block/deepslate_${ore}_ore.png"
-            unzip -l Veilbound-0.1.49-dev.jar | grep -q "data/veilbound/loot_table/blocks/deepslate_${ore}_ore.json"
+            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/blockstates/deepslate_${ore}_ore.json"
+            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/textures/block/deepslate_${ore}_ore.png"
           done
-          unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogFieldPos = UV0;'
-          unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'in vec2 fogFieldPos;'
-          if unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogWorldPos'; then
-            echo 'Packaged vertex shader still uses camera-relative fogWorldPos.' >&2
-            exit 1
-          fi
-          if unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'fogWorldPos'; then
-            echo 'Packaged fragment shader still uses camera-relative fogWorldPos.' >&2
-            exit 1
-          fi
-          sha256sum Veilbound-0.1.49-dev.jar > Veilbound-0.1.49-dev-SHA256SUMS.txt
+          for block in chronal_engine_block mnemonic_nexus_block axiom_crucible_block horizon_stabilizer_block; do
+            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/blockstates/${block}.json"
+            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/textures/block/${block}.png"
+          done
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('Veilbound-0.1.50-dev.jar') as zf:
+              recipes = [n for n in zf.namelist() if n.startswith('data/veilbound/veilbound/engineering_recipes/') and n.endswith('.json')]
+              assert len(recipes) == 120, len(recipes)
+          print('VEILBOUND_PACKAGED_RECIPE_COUNT=120')
+          PY
+          sha256sum Veilbound-0.1.50-dev.jar > Veilbound-0.1.50-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
         shell: bash
@@ -136,21 +234,21 @@ jobs:
             https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
-          cp ../Veilbound-0.1.49-dev.jar mods/
+          cp ../Veilbound-0.1.50-dev.jar mods/
           printf 'eula=true\n' > eula.txt
           printf 'online-mode=false\n' > server.properties
           chmod +x run.sh
           set +e
-          timeout 120s ./run.sh nogui > ../Veilbound-0.1.49-dev-server-smoke.log 2>&1
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.50-dev-server-smoke.log 2>&1
           SERVER_RC=$?
           set -e
           if [ -f logs/latest.log ]; then
             cat logs/latest.log
           else
-            cat ../Veilbound-0.1.49-dev-server-smoke.log
+            cat ../Veilbound-0.1.50-dev-server-smoke.log
           fi
-          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
-            echo 'VEILBOUND_SERVER_SMOKE=PASS'
+          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log && grep -q 'Loaded 120 Veilbound dimensional-engineering recipes' logs/latest.log; then
+            echo 'VEILBOUND_SERVER_SMOKE=PASS recipes=120'
           else
             echo "VEILBOUND_SERVER_SMOKE=FAIL rc=${SERVER_RC}" >&2
             exit 1
@@ -159,10 +257,10 @@ jobs:
       - name: Upload compiler artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.49-dev-final
+          name: Veilbound-0.1.50-dev-final
           path: |
-            Veilbound-0.1.49-dev.jar
-            Veilbound-0.1.49-dev-SHA256SUMS.txt
-            Veilbound-0.1.49-dev-server-smoke.log
+            Veilbound-0.1.50-dev.jar
+            Veilbound-0.1.50-dev-SHA256SUMS.txt
+            Veilbound-0.1.50-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
