@@ -37,6 +37,16 @@ jobs:
           cat ci-0152/buildpart-*.b64 | base64 --decode > build-0152.sh.xz
           echo "d187b95648bb7fae8552686b30f38818d454e21dc52ed68d56a106319495a695  build-0152.sh.xz" | sha256sum -c -
           xz -dc build-0152.sh.xz > build-0152.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('build-0152.sh')
+          s = p.read_text(encoding='utf-8')
+          needle = 'python3 texture-pass-0152.py\n'
+          insert = '''mkdir -p "$ROOT/.vanilla"\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAXklEQVR42gXBMQEAMAwEocqNgNuR8JYLb9uUruCRgLv0dFddBR6bsaF6Ucm2xTNAXddebGur4NVdV1R424xtoMewjW3zTuouUT2wgc2eyhR3XW9TVFR7CsC2PaBsxAdyLn2NNWHIVAAAAABJRU5ErkJggg==' | base64 --decode > "$ROOT/.vanilla/stone.png"\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEVkZGR5eXlRUVE9PUMvLzdi5EnwAAAAYUlEQVR42gXBAQHEIAwEweUUgIM0qYHPoaDgX9PPMDONKqlrR7pg6r1nm1Y5FuKkm0GxIj8ig6nX6dvIHtRJqvxIbnwzsvdB6tonF9RYVT2RH+QG74861yxq/xSDJb0PyR+e6w/hsG/r7QAAAABJRU5ErkJggg==' | base64 --decode > "$ROOT/.vanilla/deepslate.png"\n'''
+          if needle not in s:
+              raise SystemExit('texture generator call not found')
+          p.write_text(s.replace(needle, insert + needle, 1), encoding='utf-8')
+          PY
           bash build-0152.sh
 
       - name: Upload validated 0.1.52 artifact
