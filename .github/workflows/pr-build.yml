@@ -22,10 +22,22 @@ jobs:
           echo "e36b2721698d091b4a375b553b22be1f80ad22cc8b0242e40f399ea0ad81eab3  Veilbound-0.1.37-dev-source.zip" | sha256sum -c -
           unzip -q Veilbound-0.1.37-dev-source.zip
           test -f Veilbound-0.1.37-dev-source/build.gradle
-          test -f Veilbound-0.1.37-dev-source/gradle.properties
-          test -f Veilbound-0.1.37-dev-source/settings.gradle
           test -d Veilbound-0.1.37-dev-source/src/main/java
           test -d Veilbound-0.1.37-dev-source/src/main/resources
+
+      - name: Apply 0.1.38 physical Veil boundary and shader patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "84fda69771fffcd07570962461c79eeddd4265980ef93bb6f00ff40291f829cb  ci/0138-overlay.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/vb138
+          tar -xzf ci/0138-overlay.tar.gz -C /tmp/vb138
+          patch -p1 -d Veilbound-0.1.37-dev-source < /tmp/vb138/ci/0138-existing.patch
+          cp -R /tmp/vb138/ci/overlays/0138/src/. Veilbound-0.1.37-dev-source/src/
+          grep -q '^mod_version=0.1.38-dev$' Veilbound-0.1.37-dev-source/gradle.properties
+          grep -q 'EntityVeilBoundaryCollisionMixin' Veilbound-0.1.37-dev-source/src/main/resources/veilbound.mixins.json
+          test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.vsh
+          test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.fsh
 
       - name: Apply Minecraft 26.2 compatibility fixes
         run: python3 ci/apply-26.2-compat.py Veilbound-0.1.37-dev-source
@@ -56,9 +68,13 @@ jobs:
           set -euo pipefail
           JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.37-dev.jar
-          unzip -t Veilbound-0.1.37-dev.jar
-          sha256sum Veilbound-0.1.37-dev.jar > Veilbound-0.1.37-dev-SHA256SUMS.txt
+          cp "$JAR" Veilbound-0.1.38-dev.jar
+          unzip -t Veilbound-0.1.38-dev.jar
+          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'EntityVeilBoundaryCollisionMixin.class'
+          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'VeilBoundarySnapshotPayload.class'
+          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.vsh'
+          unzip -l Veilbound-0.1.38-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.fsh'
+          sha256sum Veilbound-0.1.38-dev.jar > Veilbound-0.1.38-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
         shell: bash
@@ -70,18 +86,18 @@ jobs:
             https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
-          cp ../Veilbound-0.1.37-dev.jar mods/
+          cp ../Veilbound-0.1.38-dev.jar mods/
           printf 'eula=true\n' > eula.txt
           printf 'online-mode=false\n' > server.properties
           chmod +x run.sh
           set +e
-          timeout 120s ./run.sh nogui > ../Veilbound-0.1.37-dev-server-smoke.log 2>&1
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.38-dev-server-smoke.log 2>&1
           SERVER_RC=$?
           set -e
           if [ -f logs/latest.log ]; then
             cat logs/latest.log
           else
-            cat ../Veilbound-0.1.37-dev-server-smoke.log
+            cat ../Veilbound-0.1.38-dev-server-smoke.log
           fi
           if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
             echo 'VEILBOUND_SERVER_SMOKE=PASS'
@@ -93,10 +109,10 @@ jobs:
       - name: Upload test build
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.37-dev-test-build
+          name: Veilbound-0.1.38-dev-test-build
           path: |
-            Veilbound-0.1.37-dev.jar
-            Veilbound-0.1.37-dev-SHA256SUMS.txt
-            Veilbound-0.1.37-dev-server-smoke.log
+            Veilbound-0.1.38-dev.jar
+            Veilbound-0.1.38-dev-SHA256SUMS.txt
+            Veilbound-0.1.38-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
