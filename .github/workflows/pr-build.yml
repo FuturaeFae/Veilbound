@@ -10,19 +10,24 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Verify and extract audited 0.1.37 compiler baseline
+      - name: Recover known-good 0.1.37 compiler baseline
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git hash-object Veilbound-compile-input.tar.xz)" = "90b3f010f18737a030825766844cbc91f8abb926"
-          tar -xJf Veilbound-compile-input.tar.xz
+          BASELINE_COMMIT=6a8362d6e40978caa6997b2346303ffa5965b307
+          git fetch --no-tags --depth=1 origin "$BASELINE_COMMIT"
+          git show "$BASELINE_COMMIT:Veilbound-0.1.37-dev-source.zip" > Veilbound-0.1.37-dev-source.zip
+          git show "$BASELINE_COMMIT:ci/apply-26.2-compat.py" > apply-26.2-compat.py
+          echo "e36b2721698d091b4a375b553b22be1f80ad22cc8b0242e40f399ea0ad81eab3  Veilbound-0.1.37-dev-source.zip" | sha256sum -c -
+          unzip -q Veilbound-0.1.37-dev-source.zip
           test -f Veilbound-0.1.37-dev-source/build.gradle
           test -d Veilbound-0.1.37-dev-source/src/main/java
+          python3 apply-26.2-compat.py Veilbound-0.1.37-dev-source
 
       - name: Reconstruct and apply 0.1.48 compile overlay
         shell: bash
@@ -59,6 +64,36 @@ jobs:
           unzip -t Veilbound-0.1.48-dev-compiled.jar
           sha256sum Veilbound-0.1.48-dev-compiled.jar > Veilbound-0.1.48-dev-compiled-SHA256SUMS.txt
 
+      - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke-server
+          cd smoke-server
+          curl --fail --location --retry 3 --output neoforge-installer.jar \
+            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          mkdir -p mods
+          cp ../Veilbound-0.1.48-dev-compiled.jar mods/
+          printf 'eula=true\n' > eula.txt
+          printf 'online-mode=false\n' > server.properties
+          chmod +x run.sh
+          set +e
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.48-dev-server-smoke.log 2>&1
+          SERVER_RC=$?
+          set -e
+          if [ -f logs/latest.log ]; then
+            cat logs/latest.log
+          else
+            cat ../Veilbound-0.1.48-dev-server-smoke.log
+          fi
+          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
+            echo 'VEILBOUND_SERVER_SMOKE=PASS'
+          else
+            echo "VEILBOUND_SERVER_SMOKE=FAIL rc=${SERVER_RC}" >&2
+            exit 1
+          fi
+
       - name: Upload compiler artifact
         uses: actions/upload-artifact@v4
         with:
@@ -66,5 +101,6 @@ jobs:
           path: |
             Veilbound-0.1.48-dev-compiled.jar
             Veilbound-0.1.48-dev-compiled-SHA256SUMS.txt
+            Veilbound-0.1.48-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
