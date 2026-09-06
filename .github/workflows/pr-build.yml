@@ -117,7 +117,7 @@ jobs:
           test -f "$ROOT/src/main/java/dev/futurae/veilbound/block/entity/EngineeringMonumentBlockEntity.java"
           test -f "$ROOT/src/main/resources/assets/veilbound/shaders/core/engineering_monument.vsh"
           test -f "$ROOT/src/main/resources/assets/veilbound/shaders/core/engineering_monument.fsh"
-          grep -q '3.08D' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentBlock.java"
+          grep -q '0.64, 3.08, 0.64' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentBlock.java"
           grep -q 'HORIZONTAL_REACH = 2.30D' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java"
           grep -q 'DOWNWARD_ANCHOR_REACH = 3.15D' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java"
           grep -q 'EngineeringMonumentCollisionState.collisionShapes' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/mixin/EntityVeilBoundaryCollisionMixin.java"
