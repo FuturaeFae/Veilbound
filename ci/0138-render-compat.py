@@ -8,12 +8,13 @@ root = Path(sys.argv[1]).resolve()
 p = root / 'src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderPipeline.java'
 s = p.read_text()
 replacements = [
-    ('import com.mojang.blaze3d.pipeline.BlendFunction;\n', 'import com.mojang.blaze3d.PrimitiveTopology;\nimport com.mojang.blaze3d.pipeline.BlendFunction;\nimport com.mojang.blaze3d.pipeline.ColorTargetState;\n'),
+    ('import com.mojang.blaze3d.pipeline.BlendFunction;\n', 'import com.mojang.blaze3d.PrimitiveTopology;\nimport com.mojang.blaze3d.pipeline.BlendFunction;\nimport com.mojang.blaze3d.pipeline.ColorTargetState;\nimport com.mojang.blaze3d.pipeline.DepthStencilState;\nimport com.mojang.blaze3d.platform.CompareOp;\n'),
     ('import com.mojang.blaze3d.shaders.UniformType;\n', ''),
     ('import com.mojang.blaze3d.vertex.VertexFormat;\n', ''),
     ('import net.minecraft.client.renderer.rendertype.RenderSetup;\n', 'import net.minecraft.client.renderer.BindGroupLayouts;\nimport net.minecraft.client.renderer.rendertype.RenderSetup;\n'),
     ('            .withUniform("DynamicTransforms", UniformType.UNIFORM_BUFFER)\n            .withUniform("Projection", UniformType.UNIFORM_BUFFER)\n', '            .withBindGroupLayout(BindGroupLayouts.MATRICES_PROJECTION)\n'),
     ('            .withBlend(BlendFunction.TRANSLUCENT)\n', '            .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))\n'),
+    ('            .withDepthWrite(false)\n', '            .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, false, 0.0F, 0.0F))\n'),
     ('            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)\n', '            .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)\n            .withPrimitiveTopology(PrimitiveTopology.QUADS)\n'),
     ('                    .sortOnUpload()\n                    .bufferSize(RenderType.SMALL_BUFFER_SIZE)\n                    .createRenderSetup()', '                    .sortOnUpload()\n                    .createRenderSetup()'),
 ]
