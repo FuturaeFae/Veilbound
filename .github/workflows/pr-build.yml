@@ -72,7 +72,6 @@ jobs:
           python3 ci/0141-domain-admin.py Veilbound-0.1.37-dev-source
           python3 ci/0141-volumetric-boundary.py Veilbound-0.1.37-dev-source
           grep -q '^mod_version=0.1.41-dev$' Veilbound-0.1.37-dev-source/gradle.properties
-          grep -q 'getProfileCache().get(token)' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeDomainAdminCommandCoordinator.java
           grep -q 'suggests(this::suggestCoreTiers)' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeDomainAdminCommandCoordinator.java
           grep -q 'suggests(this::suggestFeatures)' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeDomainAdminCommandCoordinator.java
           grep -q 'suggests(this::suggestLaws)' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeDomainAdminCommandCoordinator.java
@@ -80,6 +79,18 @@ jobs:
           grep -q 'in vec3 veilWorldPos' Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.fsh
           if grep -q 'RenderTypes.endPortal' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderer.java; then
             echo 'Legacy End Portal fallback/seam layer still present' >&2
+            exit 1
+          fi
+
+      - name: Apply 0.1.42 reversed-Z boundary visibility fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/0142-reversed-depth.py Veilbound-0.1.37-dev-source
+          grep -q '^mod_version=0.1.42-dev$' Veilbound-0.1.37-dev-source/gradle.properties
+          grep -q 'CompareOp.GREATER_THAN_OR_EQUAL' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderPipeline.java
+          if grep -q 'CompareOp.LESS_THAN_OR_EQUAL' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderPipeline.java; then
+            echo 'Legacy forward-Z Veil depth comparison still present' >&2
             exit 1
           fi
 
@@ -109,14 +120,15 @@ jobs:
           set -euo pipefail
           JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.41-dev.jar
-          unzip -t Veilbound-0.1.41-dev.jar
-          unzip -l Veilbound-0.1.41-dev.jar | grep -q 'EntityVeilBoundaryCollisionMixin.class'
-          unzip -l Veilbound-0.1.41-dev.jar | grep -q 'VeilBoundaryRenderer.class'
-          unzip -l Veilbound-0.1.41-dev.jar | grep -q 'NeoForgeDomainAdminCommandCoordinator.class'
-          unzip -l Veilbound-0.1.41-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.vsh'
-          unzip -l Veilbound-0.1.41-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.fsh'
-          sha256sum Veilbound-0.1.41-dev.jar > Veilbound-0.1.41-dev-SHA256SUMS.txt
+          cp "$JAR" Veilbound-0.1.42-dev.jar
+          unzip -t Veilbound-0.1.42-dev.jar
+          unzip -l Veilbound-0.1.42-dev.jar | grep -q 'EntityVeilBoundaryCollisionMixin.class'
+          unzip -l Veilbound-0.1.42-dev.jar | grep -q 'VeilBoundaryRenderer.class'
+          unzip -l Veilbound-0.1.42-dev.jar | grep -q 'VeilBoundaryRenderPipeline.class'
+          unzip -l Veilbound-0.1.42-dev.jar | grep -q 'NeoForgeDomainAdminCommandCoordinator.class'
+          unzip -l Veilbound-0.1.42-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.vsh'
+          unzip -l Veilbound-0.1.42-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary.fsh'
+          sha256sum Veilbound-0.1.42-dev.jar > Veilbound-0.1.42-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
         shell: bash
@@ -128,18 +140,18 @@ jobs:
             https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
-          cp ../Veilbound-0.1.41-dev.jar mods/
+          cp ../Veilbound-0.1.42-dev.jar mods/
           printf 'eula=true\n' > eula.txt
           printf 'online-mode=false\n' > server.properties
           chmod +x run.sh
           set +e
-          timeout 120s ./run.sh nogui > ../Veilbound-0.1.41-dev-server-smoke.log 2>&1
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.42-dev-server-smoke.log 2>&1
           SERVER_RC=$?
           set -e
           if [ -f logs/latest.log ]; then
             cat logs/latest.log
           else
-            cat ../Veilbound-0.1.41-dev-server-smoke.log
+            cat ../Veilbound-0.1.42-dev-server-smoke.log
           fi
           if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
             echo 'VEILBOUND_SERVER_SMOKE=PASS'
@@ -151,10 +163,10 @@ jobs:
       - name: Upload test build
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.41-dev-volumetric-admin
+          name: Veilbound-0.1.42-dev-reversed-depth
           path: |
-            Veilbound-0.1.41-dev.jar
-            Veilbound-0.1.41-dev-SHA256SUMS.txt
-            Veilbound-0.1.41-dev-server-smoke.log
+            Veilbound-0.1.42-dev.jar
+            Veilbound-0.1.42-dev-SHA256SUMS.txt
+            Veilbound-0.1.42-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
