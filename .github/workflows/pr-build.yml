@@ -26,6 +26,10 @@ jobs:
         with:
           gradle-version: '9.2.1'
 
+      - name: Set up texture build dependency
+        shell: bash
+        run: python3 -m pip install --user pillow
+
       - name: Reconstruct, validate, build, and smoke-test Veilbound 0.1.52
         shell: bash
         run: |
