@@ -26,17 +26,22 @@ jobs:
         with:
           gradle-version: '9.2.1'
 
-      - name: Reconstruct, validate, build, and smoke-test Veilbound 0.1.51
+      - name: Reconstruct, validate, build, and smoke-test Veilbound 0.1.52
         shell: bash
-        run: bash ci/run-0151-chunked.sh
+        run: |
+          set -euo pipefail
+          cat ci-0152/buildpart-*.b64 | base64 --decode > build-0152.sh.xz
+          echo "d187b95648bb7fae8552686b30f38818d454e21dc52ed68d56a106319495a695  build-0152.sh.xz" | sha256sum -c -
+          xz -dc build-0152.sh.xz > build-0152.sh
+          bash build-0152.sh
 
-      - name: Upload validated 0.1.51 artifact
+      - name: Upload validated 0.1.52 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.51-dev-final
+          name: Veilbound-0.1.52-dev-final
           path: |
-            Veilbound-0.1.51-dev.jar
-            Veilbound-0.1.51-dev-SHA256SUMS.txt
-            Veilbound-0.1.51-dev-server-smoke.log
+            Veilbound-0.1.52-dev.jar
+            Veilbound-0.1.52-dev-SHA256SUMS.txt
+            Veilbound-0.1.52-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
