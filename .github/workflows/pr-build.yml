@@ -29,11 +29,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "53be5f22342553f33bb7238501ac0fe9ebf0354f7755173c716e94f48660478e  ci/0138-overlay.tar.gz" | sha256sum -c -
+          echo "84fda69771fffcd07570962461c79eeddd4265980ef93bb6f00ff40291f829cb  ci/0138-overlay.tar.gz" | sha256sum -c -
           mkdir -p /tmp/vb138
           tar -xzf ci/0138-overlay.tar.gz -C /tmp/vb138
           patch -p1 -d Veilbound-0.1.37-dev-source < /tmp/vb138/ci/0138-existing.patch
           cp -R /tmp/vb138/ci/overlays/0138/src/. Veilbound-0.1.37-dev-source/src/
+          python3 ci/0138-render-compat.py Veilbound-0.1.37-dev-source
           grep -q '^mod_version=0.1.38-dev$' Veilbound-0.1.37-dev-source/gradle.properties
           grep -q 'EntityVeilBoundaryCollisionMixin' Veilbound-0.1.37-dev-source/src/main/resources/veilbound.mixins.json
           test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.vsh
