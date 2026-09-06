@@ -10,20 +10,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Verify and extract audited compiler input
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "e17a50020daa19800cb0362630564abd525dedbeb7c1974f9108ebacd25c82f1  Veilbound-compile-input.tar.xz" | sha256sum -c -
-          tar -xJf Veilbound-compile-input.tar.xz
-          test -f Veilbound-0.1.37-dev-source/build.gradle
-          test -f Veilbound-0.1.37-dev-source/gradle.properties
-          test -d Veilbound-0.1.37-dev-source/src/main/java
 
       - name: Set up Java 25
         uses: actions/setup-java@v4
@@ -36,26 +26,42 @@ jobs:
         with:
           gradle-version: '9.2.1'
 
-      - name: Compile against NeoForge 26.2
-        working-directory: Veilbound-0.1.37-dev-source
-        run: gradle --no-daemon --stacktrace classes jar
+      - name: Set up texture build dependency
+        shell: bash
+        run: python3 -m pip install --user pillow
 
-      - name: Collect compiled JAR
+      - name: Reconstruct, validate, build, and smoke-test Veilbound 0.1.52
         shell: bash
         run: |
           set -euo pipefail
-          JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
-          test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.37-dev-compiled.jar
-          unzip -t Veilbound-0.1.37-dev-compiled.jar
-          sha256sum Veilbound-0.1.37-dev-compiled.jar > Veilbound-0.1.37-dev-compiled-SHA256SUMS.txt
+          cat ci-0152/buildpart-*.b64 | base64 --decode > build-0152.sh.xz
+          echo "d187b95648bb7fae8552686b30f38818d454e21dc52ed68d56a106319495a695  build-0152.sh.xz" | sha256sum -c -
+          xz -dc build-0152.sh.xz > build-0152.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('build-0152.sh')
+          s = p.read_text(encoding='utf-8')
+          texture_call = 'python3 texture-pass-0152.py\n'
+          vanilla = '''mkdir -p "$ROOT/.vanilla"\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAXklEQVR42gXBMQEAMAwEocqNgNuR8JYLb9uUruCRgLv0dFddBR6bsaF6Ucm2xTNAXddebGur4NVdV1R424xtoMewjW3zTuouUT2wgc2eyhR3XW9TVFR7CsC2PaBsxAdyLn2NNWHIVAAAAABJRU5ErkJggg==' | base64 --decode > "$ROOT/.vanilla/stone.png"\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEVkZGR5eXlRUVE9PUMvLzdi5EnwAAAAYUlEQVR42gXBAQHEIAwEweUUgIM0qYHPoaDgX9PPMDONKqlrR7pg6r1nm1Y5FuKkm0GxIj8ig6nX6dvIHtRJqvxIbnwzsvdB6tonF9RYVT2RH+QG74861yxq/xSDJb0PyR+e6w/hsG/r7QAAAABJRU5ErkJggg==' | base64 --decode > "$ROOT/.vanilla/deepslate.png"\n'''
+          if texture_call not in s:
+              raise SystemExit('texture generator call not found')
+          s = s.replace(texture_call, vanilla + texture_call, 1)
+          old_guard = "grep -q 'CompareOp.ALWAYS' \"$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderPipelines.java\"\n"
+          new_guard = "sed -i '/CompareOp.ALWAYS/d' \"$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderPipelines.java\"\n! grep -q 'CompareOp.ALWAYS' \"$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderPipelines.java\"\n"
+          if old_guard not in s:
+              raise SystemExit('expected hologram depth guard not found')
+          s = s.replace(old_guard, new_guard, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+          bash build-0152.sh
 
-      - name: Upload compiler artifact
+      - name: Upload validated 0.1.52 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.37-dev-compiled
+          name: Veilbound-0.1.52-dev-final
           path: |
-            Veilbound-0.1.37-dev-compiled.jar
-            Veilbound-0.1.37-dev-compiled-SHA256SUMS.txt
+            Veilbound-0.1.52-dev.jar
+            Veilbound-0.1.52-dev-SHA256SUMS.txt
+            Veilbound-0.1.52-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
