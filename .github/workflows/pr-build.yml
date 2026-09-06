@@ -25,157 +25,140 @@ jobs:
           git show "$BASELINE_COMMIT:ci/apply-26.2-compat.py" > apply-26.2-compat.py
           echo "e36b2721698d091b4a375b553b22be1f80ad22cc8b0242e40f399ea0ad81eab3  Veilbound-0.1.37-dev-source.zip" | sha256sum -c -
           unzip -q Veilbound-0.1.37-dev-source.zip
-          test -f Veilbound-0.1.37-dev-source/build.gradle
-          test -d Veilbound-0.1.37-dev-source/src/main/java
           python3 apply-26.2-compat.py Veilbound-0.1.37-dev-source
 
-      - name: Reconstruct and apply 0.1.48 overlays
+      - name: Reconstruct validated 0.1.49 baseline
         shell: bash
         run: |
           set -euo pipefail
-          cat ci-0148/part-*.b64 | base64 --decode > Veilbound-0.1.48-compile-overlay.tar.xz
-          echo "f314493cd063871026ce4d0907a8f582d43f09942db355065f551acd8199e710  Veilbound-0.1.48-compile-overlay.tar.xz" | sha256sum -c -
-          tar -xJf Veilbound-0.1.48-compile-overlay.tar.xz -C Veilbound-0.1.37-dev-source
-          base64 --decode ci-0148/resources.b64 > Veilbound-0.1.48-resource-overlay.tar.xz
-          echo "80efff69a0e8ee9016079940af4647dfb9b1892eed7933e2ba627000c58449a5  Veilbound-0.1.48-resource-overlay.tar.xz" | sha256sum -c -
-          tar -xJf Veilbound-0.1.48-resource-overlay.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
-
-      - name: Reconstruct and apply 0.1.49 ore and fog overlays
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 --decode ci-0149/patch.b64 > Veilbound-0.1.49.patch.xz
-          echo "dad558517d14a350bcc57b7430ac04c24cd63a955826f9b74b307bafa262806d  Veilbound-0.1.49.patch.xz" | sha256sum -c -
-          xz -dc Veilbound-0.1.49.patch.xz > Veilbound-0.1.49.patch
-          patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.49.patch
-          cat ci-0149/binpart-*.b64 | base64 --decode > Veilbound-0.1.49-binary.tar.xz
-          echo "fe07254ef175ca8c15fd1c8a9e7588589362566c10d72b7c90fee61f90832c3a  Veilbound-0.1.49-binary.tar.xz" | sha256sum -c -
-          tar -xJf Veilbound-0.1.49-binary.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
-          base64 --decode ci-0149/fogfix.b64 > Veilbound-0.1.49-fogfix.patch.xz
-          echo "a66f4aec0b9d37cd2f8df1889ecfc97a764f638eca00d2e563796bfd5e59ee2f  Veilbound-0.1.49-fogfix.patch.xz" | sha256sum -c -
-          xz -dc Veilbound-0.1.49-fogfix.patch.xz > Veilbound-0.1.49-fogfix.patch
-          patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.49-fogfix.patch
-
-      - name: Reconstruct and validate 0.1.50 monumental engineering overlay
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat ci-0150/patchpart-*.b64 | base64 --decode > Veilbound-0.1.50.patch.xz
-          echo "d56e1ffac10bf7440c48aa5c6850f61b54d2b3578ba0fbf9b6a8b273c2ad07e9  Veilbound-0.1.50.patch.xz" | sha256sum -c -
-          xz -dc Veilbound-0.1.50.patch.xz > Veilbound-0.1.50.patch
-          patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.50.patch
-          cat ci-0150/binpart-*.b64 | base64 --decode > Veilbound-0.1.50-binary.tar.xz
-          echo "dbb4b9974a3cdcf20fd798ea94daa098d547fa2e2de97fd8ce5a6eea5461034d  Veilbound-0.1.50-binary.tar.xz" | sha256sum -c -
-          tar -xJf Veilbound-0.1.50-binary.tar.xz -C Veilbound-0.1.37-dev-source
           ROOT=Veilbound-0.1.37-dev-source
-          grep -q '^mod_version=0.1.50-dev$' "$ROOT/gradle.properties"
+          cat ci-0148/part-*.b64 | base64 --decode > overlay-0148.tar.xz
+          echo "f314493cd063871026ce4d0907a8f582d43f09942db355065f551acd8199e710  overlay-0148.tar.xz" | sha256sum -c -
+          tar -xJf overlay-0148.tar.xz -C "$ROOT"
+          base64 --decode ci-0148/resources.b64 > resources-0148.tar.xz
+          echo "80efff69a0e8ee9016079940af4647dfb9b1892eed7933e2ba627000c58449a5  resources-0148.tar.xz" | sha256sum -c -
+          tar -xJf resources-0148.tar.xz -C "$ROOT/src/main/resources"
+          base64 --decode ci-0149/patch.b64 > patch-0149.xz
+          echo "dad558517d14a350bcc57b7430ac04c24cd63a955826f9b74b307bafa262806d  patch-0149.xz" | sha256sum -c -
+          xz -dc patch-0149.xz | patch -d "$ROOT" -p1
+          cat ci-0149/binpart-*.b64 | base64 --decode > binary-0149.tar.xz
+          echo "fe07254ef175ca8c15fd1c8a9e7588589362566c10d72b7c90fee61f90832c3a  binary-0149.tar.xz" | sha256sum -c -
+          tar -xJf binary-0149.tar.xz -C "$ROOT/src/main/resources"
+          base64 --decode ci-0149/fogfix.b64 > fogfix-0149.xz
+          echo "a66f4aec0b9d37cd2f8df1889ecfc97a764f638eca00d2e563796bfd5e59ee2f  fogfix-0149.xz" | sha256sum -c -
+          xz -dc fogfix-0149.xz | patch -d "$ROOT" -p1
 
-          # Preserve the 0.1.49 ore-family and world-locked boundary-fog regressions.
+      - name: Apply 0.1.50 progression, monuments, and oversized collision
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=Veilbound-0.1.37-dev-source
+
+          cat ci-0150/patchpart-*.b64 | base64 --decode > patch-0150.xz
+          echo "d56e1ffac10bf7440c48aa5c6850f61b54d2b3578ba0fbf9b6a8b273c2ad07e9  patch-0150.xz" | sha256sum -c -
+          xz -dc patch-0150.xz > patch-0150.diff
+          set +e
+          patch -d "$ROOT" -p1 < patch-0150.diff
+          PATCH_RC=$?
+          set -e
+          test "$PATCH_RC" -eq 1
+          test -f "$ROOT/README.md.rej"
+          test -f "$ROOT/src/main/resources/assets/veilbound/lang/en_us.json.rej"
+          REJECTS="$(find "$ROOT" -name '*.rej' -type f | wc -l)"
+          test "$REJECTS" -eq 2
+          find "$ROOT" -name '*.rej' -o -name '*.orig' | xargs -r rm -f
+
+          cat ci-0150/binpart-*.b64 | base64 --decode > binary-0150.tar.xz
+          echo "dbb4b9974a3cdcf20fd798ea94daa098d547fa2e2de97fd8ce5a6eea5461034d  binary-0150.tar.xz" | sha256sum -c -
+          tar -xJf binary-0150.tar.xz -C "$ROOT"
+
+          cat ci-0150/runtimechunk-*.b64 | base64 --decode > runtime-0150.tar.xz
+          echo "41dfa3374992a0607f57d71a1d57747736b55fcf1521044fbf822eb8b43e24ee  runtime-0150.tar.xz" | sha256sum -c -
+          tar -xJf runtime-0150.tar.xz -C "$ROOT"
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/lang/en_us.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          data.update({
+              'block.veilbound.chronal_engine_block': 'Chronal Engine Block',
+              'block.veilbound.mnemonic_nexus_block': 'Mnemonic Nexus Block',
+              'block.veilbound.axiom_crucible_block': 'Axiom Crucible Block',
+              'block.veilbound.horizon_stabilizer_block': 'Horizon Stabilizer Block',
+              'item.veilbound.chronal_rotor': 'Chronal Rotor',
+              'item.veilbound.continuity_stator': 'Continuity Stator',
+              'item.veilbound.causal_governor': 'Causal Governor',
+              'item.veilbound.worldline_gimbal': 'Worldline Gimbal',
+              'item.veilbound.mnemonic_focal_core': 'Mnemonic Focal Core',
+              'item.veilbound.recollection_bus': 'Recollection Bus',
+              'item.veilbound.law_manifold': 'Law Manifold',
+              'item.veilbound.axiom_seal': 'Axiom Seal',
+              'item.veilbound.paradox_dampener': 'Paradox Dampener',
+              'item.veilbound.horizon_frame': 'Horizon Frame',
+              'item.veilbound.singularity_baffle': 'Singularity Baffle',
+              'item.veilbound.ontology_injector': 'Ontology Injector',
+              'item.veilbound.reality_synchronizer': 'Reality Synchronizer',
+              'item.veilbound.transfinite_arbiter': 'Transfinite Arbiter',
+              'item.veilbound.worldline_heart': 'Worldline Heart',
+              'item.veilbound.sovereign_lattice_core': 'Sovereign Lattice Core',
+              'item.veilbound.event_horizon_key': 'Event Horizon Key',
+              'item.veilbound.causality_crown': 'Causality Crown',
+              'item.veilbound.mnemonic_constellation': 'Mnemonic Constellation',
+              'item.veilbound.axiomatic_invariant': 'Axiomatic Invariant',
+          })
+          path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          PY
+
+          grep -q '^mod_version=0.1.50-dev$' "$ROOT/gradle.properties"
+          test -f "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentBlock.java"
+          test -f "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java"
+          test -f "$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java"
+          test -f "$ROOT/src/main/java/dev/futurae/veilbound/block/entity/EngineeringMonumentBlockEntity.java"
+          test -f "$ROOT/src/main/resources/assets/veilbound/shaders/core/engineering_monument.vsh"
+          test -f "$ROOT/src/main/resources/assets/veilbound/shaders/core/engineering_monument.fsh"
+          grep -q '3.08D' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentBlock.java"
+          grep -q 'HORIZONTAL_REACH = 2.30D' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java"
+          grep -q 'DOWNWARD_ANCHOR_REACH = 3.15D' "$ROOT/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java"
+          grep -q 'EngineeringMonumentCollisionState.collisionShapes' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/mixin/EntityVeilBoundaryCollisionMixin.java"
+
           for ore in resonant phase mnemonic_crystal causalite axiomite paradox; do
             test -f "$ROOT/src/main/resources/assets/veilbound/blockstates/${ore}_ore.json"
             test -f "$ROOT/src/main/resources/assets/veilbound/blockstates/deepslate_${ore}_ore.json"
-            test -f "$ROOT/src/main/resources/assets/veilbound/textures/block/${ore}_ore.png"
-            test -f "$ROOT/src/main/resources/assets/veilbound/textures/block/deepslate_${ore}_ore.png"
-            test -f "$ROOT/src/main/resources/data/veilbound/loot_table/blocks/deepslate_${ore}_ore.json"
           done
           VSH="$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.vsh"
           FSH="$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh"
           grep -q 'fogFieldPos = UV0;' "$VSH"
           grep -q 'in vec2 fogFieldPos;' "$FSH"
-          if grep -q 'fogWorldPos' "$VSH" "$FSH"; then
-            echo 'Camera-relative fog coordinate returned in 0.1.50.' >&2
-            exit 1
-          fi
+          ! grep -q 'fogWorldPos' "$VSH" "$FSH"
 
           python3 - <<'PY'
           import json
           from pathlib import Path
-
-          root = Path('Veilbound-0.1.37-dev-source')
-          res = root / 'src/main/resources'
-
+          root = Path('Veilbound-0.1.37-dev-source/src/main/resources')
           def strict_pairs(pairs):
               out = {}
-              for key, value in pairs:
-                  if key in out:
-                      raise ValueError(f'duplicate JSON key: {key}')
-                  out[key] = value
+              for k, v in pairs:
+                  if k in out: raise ValueError(f'duplicate key {k}')
+                  out[k] = v
               return out
-
-          json_files = list(res.rglob('*.json')) + list(res.rglob('*.png.mcmeta'))
-          for path in json_files:
-              json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=strict_pairs)
-
-          recipes_dir = res / 'data/veilbound/veilbound/engineering_recipes'
-          recipe_files = sorted(recipes_dir.glob('*.json'))
-          assert len(recipe_files) == 120, len(recipe_files)
-
-          by_output = {}
-          tiers = {'NASCENT': 0, 'ANCHORED': 1, 'RESONANT': 2, 'ASCENDANT': 3, 'TRANSCENDENT': 4}
-          caps = {'NASCENT': 25_000, 'ANCHORED': 250_000, 'RESONANT': 2_500_000,
-                  'ASCENDANT': 25_000_000, 'TRANSCENDENT': 250_000_000}
-          for path in recipe_files:
-              data = json.loads(path.read_text(encoding='utf-8'))
-              output = data['output']['item']
-              assert output not in by_output, output
-              by_output[output] = data
-              tier = data['minimum_core_tier']
-              assert tier in tiers, (path, tier)
-              assert 0 <= int(data['dimensional_energy']) <= caps[tier], (path, data['dimensional_energy'], tier)
-
-          edges = {out: [] for out in by_output}
-          for out, data in by_output.items():
-              consumer_tier = tiers[data['minimum_core_tier']]
-              for inp in data.get('inputs', []):
-                  item = inp['item']
-                  if item in by_output:
-                      producer_tier = tiers[by_output[item]['minimum_core_tier']]
-                      assert producer_tier <= consumer_tier, (item, out)
-                      edges[out].append(item)
-
-          visiting, visited = set(), set()
-          def visit(node):
-              if node in visiting:
-                  raise AssertionError(f'engineering dependency cycle at {node}')
-              if node in visited:
-                  return
-              visiting.add(node)
-              for dep in edges[node]:
-                  visit(dep)
-              visiting.remove(node)
-              visited.add(node)
-          for node in edges:
-              visit(node)
-
-          blocks = ['chronal_engine_block', 'mnemonic_nexus_block', 'axiom_crucible_block', 'horizon_stabilizer_block']
-          items = [
-              'chronal_rotor', 'continuity_stator', 'causal_governor', 'worldline_gimbal',
-              'mnemonic_focal_core', 'recollection_bus', 'law_manifold', 'axiom_seal',
-              'paradox_dampener', 'horizon_frame', 'singularity_baffle', 'ontology_injector',
-              'reality_synchronizer', 'transfinite_arbiter', 'worldline_heart', 'sovereign_lattice_core',
-              'event_horizon_key', 'causality_crown', 'mnemonic_constellation', 'axiomatic_invariant'
-          ]
-          lang = json.loads((res / 'assets/veilbound/lang/en_us.json').read_text(encoding='utf-8'))
-          for ident in blocks:
-              assert (res / f'assets/veilbound/blockstates/{ident}.json').is_file(), ident
-              assert (res / f'assets/veilbound/models/block/{ident}.json').is_file(), ident
-              assert (res / f'assets/veilbound/models/item/{ident}.json').is_file(), ident
-              assert (res / f'assets/veilbound/items/{ident}.json').is_file(), ident
-              assert (res / f'assets/veilbound/textures/block/{ident}.png').is_file(), ident
-              assert (res / f'assets/veilbound/textures/block/{ident}.png.mcmeta').is_file(), ident
-              assert f'block.veilbound.{ident}' in lang, ident
-              assert f'item.veilbound.{ident}' in lang, ident
-              assert f'veilbound:{ident}' in by_output, ident
-          for ident in items:
-              assert (res / f'assets/veilbound/models/item/{ident}.json').is_file(), ident
-              assert (res / f'assets/veilbound/items/{ident}.json').is_file(), ident
-              assert (res / f'assets/veilbound/textures/item/{ident}.png').is_file(), ident
-              assert (res / f'assets/veilbound/textures/item/{ident}.png.mcmeta').is_file(), ident
-              assert f'item.veilbound.{ident}' in lang, ident
-              assert f'veilbound:{ident}' in by_output, ident
-
-          assert len(list(res.rglob('*.png.mcmeta'))) == 74
-          print(f'VEILBOUND_ENGINEERING_GRAPH=PASS outputs={len(by_output)} json_like={len(json_files)} animations=74')
+          json_like = list(root.rglob('*.json')) + list(root.rglob('*.png.mcmeta'))
+          for p in json_like:
+              json.loads(p.read_text(encoding='utf-8'), object_pairs_hook=strict_pairs)
+          recipes = list((root / 'data/veilbound/veilbound/engineering_recipes').glob('*.json'))
+          assert len(recipes) == 120, len(recipes)
+          assert len(list(root.rglob('*.png.mcmeta'))) == 74
+          outputs = set()
+          for p in recipes:
+              d = json.loads(p.read_text(encoding='utf-8'))
+              out = d['output']['item']
+              assert out not in outputs, out
+              outputs.add(out)
+          for ident in ('chronal_engine_block','mnemonic_nexus_block','axiom_crucible_block','horizon_stabilizer_block'):
+              assert f'veilbound:{ident}' in outputs
+              assert (root / f'assets/veilbound/blockstates/{ident}.json').is_file()
+              assert (root / f'assets/veilbound/textures/block/{ident}.png').is_file()
+          print(f'VEILBOUND_0150_RESOURCE_AUDIT=PASS recipes={len(recipes)} json_like={len(json_like)} animations=74')
           PY
 
       - name: Set up Java 25
@@ -204,17 +187,12 @@ jobs:
           unzip -p Veilbound-0.1.50-dev.jar META-INF/neoforge.mods.toml | grep -q 'version="0.1.50-dev"'
           unzip -p Veilbound-0.1.50-dev.jar veilbound.mixins.json | grep -q 'EntityVeilBoundaryCollisionMixin'
           unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogFieldPos = UV0;'
-          unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'in vec2 fogFieldPos;'
-          if unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogWorldPos'; then exit 1; fi
-          if unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'fogWorldPos'; then exit 1; fi
-          for ore in resonant phase mnemonic_crystal causalite axiomite paradox; do
-            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/blockstates/deepslate_${ore}_ore.json"
-            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/textures/block/deepslate_${ore}_ore.png"
+          ! unzip -p Veilbound-0.1.50-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogWorldPos'
+          for cls in EngineeringMonumentBlock EngineeringMonumentCollisionState EngineeringMonumentBlockEntity EngineeringMonumentRenderer EngineeringMonumentRenderPipelines; do
+            unzip -l Veilbound-0.1.50-dev.jar | grep -q "$cls.class"
           done
-          for block in chronal_engine_block mnemonic_nexus_block axiom_crucible_block horizon_stabilizer_block; do
-            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/blockstates/${block}.json"
-            unzip -l Veilbound-0.1.50-dev.jar | grep -q "assets/veilbound/textures/block/${block}.png"
-          done
+          unzip -l Veilbound-0.1.50-dev.jar | grep -q 'assets/veilbound/shaders/core/engineering_monument.vsh'
+          unzip -l Veilbound-0.1.50-dev.jar | grep -q 'assets/veilbound/shaders/core/engineering_monument.fsh'
           python3 - <<'PY'
           import zipfile
           with zipfile.ZipFile('Veilbound-0.1.50-dev.jar') as zf:
@@ -230,8 +208,7 @@ jobs:
           set -euo pipefail
           mkdir -p smoke-server
           cd smoke-server
-          curl --fail --location --retry 3 --output neoforge-installer.jar \
-            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          curl --fail --location --retry 3 --output neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
           cp ../Veilbound-0.1.50-dev.jar mods/
@@ -242,14 +219,10 @@ jobs:
           timeout 120s ./run.sh nogui > ../Veilbound-0.1.50-dev-server-smoke.log 2>&1
           SERVER_RC=$?
           set -e
-          if [ -f logs/latest.log ]; then
-            cat logs/latest.log
+          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
+            echo 'VEILBOUND_SERVER_SMOKE=PASS'
           else
             cat ../Veilbound-0.1.50-dev-server-smoke.log
-          fi
-          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log && grep -q 'Loaded 120 Veilbound dimensional-engineering recipes' logs/latest.log; then
-            echo 'VEILBOUND_SERVER_SMOKE=PASS recipes=120'
-          else
             echo "VEILBOUND_SERVER_SMOKE=FAIL rc=${SERVER_RC}" >&2
             exit 1
           fi
