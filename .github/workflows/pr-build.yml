@@ -28,7 +28,7 @@ jobs:
 
       - name: Reconstruct, validate, build, and smoke-test Veilbound 0.1.51
         shell: bash
-        run: bash ci/build-0151.sh
+        run: bash ci/run-0151-chunked.sh
 
       - name: Upload validated 0.1.51 artifact
         uses: actions/upload-artifact@v4
