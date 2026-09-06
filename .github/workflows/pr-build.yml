@@ -39,10 +39,33 @@ jobs:
           base64 --decode ci-0148/resources.b64 > Veilbound-0.1.48-resource-overlay.tar.xz
           echo "80efff69a0e8ee9016079940af4647dfb9b1892eed7933e2ba627000c58449a5  Veilbound-0.1.48-resource-overlay.tar.xz" | sha256sum -c -
           tar -xJf Veilbound-0.1.48-resource-overlay.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
-          grep -q '^mod_version=0.1.48-dev$' Veilbound-0.1.37-dev-source/gradle.properties
-          test -f Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
-          grep -q 'EntityVeilBoundaryCollisionMixin' Veilbound-0.1.37-dev-source/src/main/resources/veilbound.mixins.json
-          test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh
+
+      - name: Reconstruct and apply 0.1.49 ore overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode ci-0149/patch.b64 > Veilbound-0.1.49.patch.xz
+          echo "dad558517d14a350bcc57b7430ac04c24cd63a955826f9b74b307bafa262806d  Veilbound-0.1.49.patch.xz" | sha256sum -c -
+          xz -dc Veilbound-0.1.49.patch.xz > Veilbound-0.1.49.patch
+          patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.49.patch
+          cat ci-0149/binpart-*.b64 | base64 --decode > Veilbound-0.1.49-binary.tar.xz
+          echo "fe07254ef175ca8c15fd1c8a9e7588589362566c10d72b7c90fee61f90832c3a  Veilbound-0.1.49-binary.tar.xz" | sha256sum -c -
+          tar -xJf Veilbound-0.1.49-binary.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
+          ROOT=Veilbound-0.1.37-dev-source
+          grep -q '^mod_version=0.1.49-dev$' "$ROOT/gradle.properties"
+          test -f "$ROOT/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java"
+          test -f "$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh"
+          grep -q 'EntityVeilBoundaryCollisionMixin' "$ROOT/src/main/resources/veilbound.mixins.json"
+          for ore in resonant phase mnemonic_crystal causalite axiomite paradox; do
+            test -f "$ROOT/src/main/resources/assets/veilbound/blockstates/${ore}_ore.json"
+            test -f "$ROOT/src/main/resources/assets/veilbound/blockstates/deepslate_${ore}_ore.json"
+            test -f "$ROOT/src/main/resources/assets/veilbound/textures/block/${ore}_ore.png"
+            test -f "$ROOT/src/main/resources/assets/veilbound/textures/block/deepslate_${ore}_ore.png"
+            test -f "$ROOT/src/main/resources/data/veilbound/loot_table/blocks/deepslate_${ore}_ore.json"
+          done
+          test -f "$ROOT/src/main/resources/data/minecraft/tags/block/mineable/pickaxe.json"
+          test -f "$ROOT/src/main/resources/data/c/tags/block/ores.json"
+          test -f "$ROOT/src/main/resources/data/c/tags/item/ores.json"
 
       - name: Set up Java 25
         uses: actions/setup-java@v4
@@ -65,13 +88,18 @@ jobs:
           set -euo pipefail
           JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
           test -n "$JAR"
-          cp "$JAR" Veilbound-0.1.48-dev.jar
-          unzip -t Veilbound-0.1.48-dev.jar
-          unzip -p Veilbound-0.1.48-dev.jar META-INF/neoforge.mods.toml | grep -q 'version="0.1.48-dev"'
-          unzip -p Veilbound-0.1.48-dev.jar veilbound.mixins.json | grep -q 'EntityVeilBoundaryCollisionMixin'
-          unzip -l Veilbound-0.1.48-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary_fog.fsh'
-          unzip -l Veilbound-0.1.48-dev.jar | grep -q 'dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.class'
-          sha256sum Veilbound-0.1.48-dev.jar > Veilbound-0.1.48-dev-SHA256SUMS.txt
+          cp "$JAR" Veilbound-0.1.49-dev.jar
+          unzip -t Veilbound-0.1.49-dev.jar
+          unzip -p Veilbound-0.1.49-dev.jar META-INF/neoforge.mods.toml | grep -q 'version="0.1.49-dev"'
+          unzip -p Veilbound-0.1.49-dev.jar veilbound.mixins.json | grep -q 'EntityVeilBoundaryCollisionMixin'
+          unzip -l Veilbound-0.1.49-dev.jar | grep -q 'assets/veilbound/shaders/core/veil_boundary_fog.fsh'
+          unzip -l Veilbound-0.1.49-dev.jar | grep -q 'dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.class'
+          for ore in resonant phase mnemonic_crystal causalite axiomite paradox; do
+            unzip -l Veilbound-0.1.49-dev.jar | grep -q "assets/veilbound/blockstates/deepslate_${ore}_ore.json"
+            unzip -l Veilbound-0.1.49-dev.jar | grep -q "assets/veilbound/textures/block/deepslate_${ore}_ore.png"
+            unzip -l Veilbound-0.1.49-dev.jar | grep -q "data/veilbound/loot_table/blocks/deepslate_${ore}_ore.json"
+          done
+          sha256sum Veilbound-0.1.49-dev.jar > Veilbound-0.1.49-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
         shell: bash
@@ -83,18 +111,18 @@ jobs:
             https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           mkdir -p mods
-          cp ../Veilbound-0.1.48-dev.jar mods/
+          cp ../Veilbound-0.1.49-dev.jar mods/
           printf 'eula=true\n' > eula.txt
           printf 'online-mode=false\n' > server.properties
           chmod +x run.sh
           set +e
-          timeout 120s ./run.sh nogui > ../Veilbound-0.1.48-dev-server-smoke.log 2>&1
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.49-dev-server-smoke.log 2>&1
           SERVER_RC=$?
           set -e
           if [ -f logs/latest.log ]; then
             cat logs/latest.log
           else
-            cat ../Veilbound-0.1.48-dev-server-smoke.log
+            cat ../Veilbound-0.1.49-dev-server-smoke.log
           fi
           if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
             echo 'VEILBOUND_SERVER_SMOKE=PASS'
@@ -106,10 +134,10 @@ jobs:
       - name: Upload compiler artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Veilbound-0.1.48-dev-final
+          name: Veilbound-0.1.49-dev-final
           path: |
-            Veilbound-0.1.48-dev.jar
-            Veilbound-0.1.48-dev-SHA256SUMS.txt
-            Veilbound-0.1.48-dev-server-smoke.log
+            Veilbound-0.1.49-dev.jar
+            Veilbound-0.1.49-dev-SHA256SUMS.txt
+            Veilbound-0.1.49-dev-server-smoke.log
           if-no-files-found: error
           retention-days: 30
