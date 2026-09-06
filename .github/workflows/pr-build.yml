@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "e17a50020daa19800cb0362630564abd525dedbeb7c1974f9108ebacd25c82f1  Veilbound-compile-input.tar.xz" | sha256sum -c -
+          test "$(git hash-object Veilbound-compile-input.tar.xz)" = "90b3f010f18737a030825766844cbc91f8abb926"
           tar -xJf Veilbound-compile-input.tar.xz
           test -f Veilbound-0.1.37-dev-source/build.gradle
           test -d Veilbound-0.1.37-dev-source/src/main/java
