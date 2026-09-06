@@ -40,7 +40,7 @@ jobs:
           echo "80efff69a0e8ee9016079940af4647dfb9b1892eed7933e2ba627000c58449a5  Veilbound-0.1.48-resource-overlay.tar.xz" | sha256sum -c -
           tar -xJf Veilbound-0.1.48-resource-overlay.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
 
-      - name: Reconstruct and apply 0.1.49 ore overlays
+      - name: Reconstruct and apply 0.1.49 ore and fog overlays
         shell: bash
         run: |
           set -euo pipefail
@@ -51,6 +51,10 @@ jobs:
           cat ci-0149/binpart-*.b64 | base64 --decode > Veilbound-0.1.49-binary.tar.xz
           echo "fe07254ef175ca8c15fd1c8a9e7588589362566c10d72b7c90fee61f90832c3a  Veilbound-0.1.49-binary.tar.xz" | sha256sum -c -
           tar -xJf Veilbound-0.1.49-binary.tar.xz -C Veilbound-0.1.37-dev-source/src/main/resources
+          base64 --decode ci-0149/fogfix.b64 > Veilbound-0.1.49-fogfix.patch.xz
+          echo "a66f4aec0b9d37cd2f8df1889ecfc97a764f638eca00d2e563796bfd5e59ee2f  Veilbound-0.1.49-fogfix.patch.xz" | sha256sum -c -
+          xz -dc Veilbound-0.1.49-fogfix.patch.xz > Veilbound-0.1.49-fogfix.patch
+          patch -d Veilbound-0.1.37-dev-source -p1 < Veilbound-0.1.49-fogfix.patch
           ROOT=Veilbound-0.1.37-dev-source
           grep -q '^mod_version=0.1.49-dev$' "$ROOT/gradle.properties"
           test -f "$ROOT/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java"
@@ -66,6 +70,17 @@ jobs:
           test -f "$ROOT/src/main/resources/data/minecraft/tags/block/mineable/pickaxe.json"
           test -f "$ROOT/src/main/resources/data/c/tags/block/ores.json"
           test -f "$ROOT/src/main/resources/data/c/tags/item/ores.json"
+          VSH="$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.vsh"
+          FSH="$ROOT/src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh"
+          RENDERER="$ROOT/src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderer.java"
+          grep -q 'fogFieldPos = UV0;' "$VSH"
+          grep -q 'in vec2 fogFieldPos;' "$FSH"
+          grep -q 'fieldU + time \* 0.72F' "$RENDERER"
+          grep -q 'setColor(depth, faceSeed, 1.0F, alpha)' "$RENDERER"
+          if grep -q 'fogWorldPos' "$VSH" "$FSH"; then
+            echo 'Camera-relative fog coordinate survived the 0.1.49 overlay.' >&2
+            exit 1
+          fi
 
       - name: Set up Java 25
         uses: actions/setup-java@v4
@@ -99,6 +114,16 @@ jobs:
             unzip -l Veilbound-0.1.49-dev.jar | grep -q "assets/veilbound/textures/block/deepslate_${ore}_ore.png"
             unzip -l Veilbound-0.1.49-dev.jar | grep -q "data/veilbound/loot_table/blocks/deepslate_${ore}_ore.json"
           done
+          unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogFieldPos = UV0;'
+          unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'in vec2 fogFieldPos;'
+          if unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.vsh | grep -q 'fogWorldPos'; then
+            echo 'Packaged vertex shader still uses camera-relative fogWorldPos.' >&2
+            exit 1
+          fi
+          if unzip -p Veilbound-0.1.49-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'fogWorldPos'; then
+            echo 'Packaged fragment shader still uses camera-relative fogWorldPos.' >&2
+            exit 1
+          fi
           sha256sum Veilbound-0.1.49-dev.jar > Veilbound-0.1.49-dev-SHA256SUMS.txt
 
       - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
