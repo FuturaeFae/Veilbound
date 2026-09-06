@@ -1,0 +1,100 @@
+name: Build Veilbound 0.1.46 PR
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-0146:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify and extract audited source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "e36b2721698d091b4a375b553b22be1f80ad22cc8b0242e40f399ea0ad81eab3  Veilbound-0.1.37-dev-source.zip" | sha256sum -c -
+          unzip -q Veilbound-0.1.37-dev-source.zip
+          test -f Veilbound-0.1.37-dev-source/build.gradle
+
+      - name: Prepare 0.1.46 source
+        shell: bash
+        run: bash ci/prepare-0146.sh Veilbound-0.1.37-dev-source
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Build and run regressions against NeoForge 26.2
+        working-directory: Veilbound-0.1.37-dev-source
+        run: gradle --no-daemon --stacktrace build
+
+      - name: Collect test JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR="$(find Veilbound-0.1.37-dev-source/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" Veilbound-0.1.46-dev.jar
+          unzip -t Veilbound-0.1.46-dev.jar
+          unzip -l Veilbound-0.1.46-dev.jar | grep -q 'VeilBoundaryRenderer.class'
+          unzip -l Veilbound-0.1.46-dev.jar | grep -q 'VeilBoundaryFogRenderPipeline.class'
+          unzip -p Veilbound-0.1.46-dev.jar assets/veilbound/shaders/core/veil_boundary.fsh | grep -q 'vec4(0.0, 0.0, 0.0, 1.0)'
+          unzip -p Veilbound-0.1.46-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'a_pair = 1 - (1 - a)^2'
+          unzip -p Veilbound-0.1.46-dev.jar assets/veilbound/shaders/core/veil_boundary_fog.fsh | grep -q 'i < 4'
+          unzip -p Veilbound-0.1.46-dev.jar data/veilbound/dimension_type/domain.json | grep -q '"neoforge:custom_clouds": "veilbound:no_clouds"'
+          sha256sum Veilbound-0.1.46-dev.jar > Veilbound-0.1.46-dev-SHA256SUMS.txt
+
+      - name: Smoke-test packaged JAR on NeoForge 26.2.0.75 dedicated server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke-server
+          cd smoke-server
+          curl --fail --location --retry 3 --output neoforge-installer.jar \
+            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          mkdir -p mods
+          cp ../Veilbound-0.1.46-dev.jar mods/
+          printf 'eula=true\n' > eula.txt
+          printf 'online-mode=false\n' > server.properties
+          chmod +x run.sh
+          set +e
+          timeout 120s ./run.sh nogui > ../Veilbound-0.1.46-dev-server-smoke.log 2>&1
+          SERVER_RC=$?
+          set -e
+          if [ -f logs/latest.log ]; then
+            cat logs/latest.log
+          else
+            cat ../Veilbound-0.1.46-dev-server-smoke.log
+          fi
+          if [ -f logs/latest.log ] && grep -Eq 'Done \(|For help, type' logs/latest.log; then
+            echo 'VEILBOUND_SERVER_SMOKE=PASS'
+          else
+            echo "VEILBOUND_SERVER_SMOKE=FAIL rc=${SERVER_RC}" >&2
+            exit 1
+          fi
+
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.46-dev-fog-performance
+          path: |
+            Veilbound-0.1.46-dev.jar
+            Veilbound-0.1.46-dev-SHA256SUMS.txt
+            Veilbound-0.1.46-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30
