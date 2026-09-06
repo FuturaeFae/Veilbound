@@ -35,8 +35,10 @@ jobs:
           patch -p1 -d Veilbound-0.1.37-dev-source < /tmp/vb138/ci/0138-existing.patch
           cp -R /tmp/vb138/ci/overlays/0138/src/. Veilbound-0.1.37-dev-source/src/
           python3 ci/0138-render-compat.py Veilbound-0.1.37-dev-source
+          python3 ci/0138-collision-compat.py Veilbound-0.1.37-dev-source
           grep -q '^mod_version=0.1.38-dev$' Veilbound-0.1.37-dev-source/gradle.properties
           grep -q 'EntityVeilBoundaryCollisionMixin' Veilbound-0.1.37-dev-source/src/main/resources/veilbound.mixins.json
+          grep -q 'method = "getEntityCollisions"' Veilbound-0.1.37-dev-source/src/main/java/dev/futurae/veilbound/platform/neoforge/mixin/EntityVeilBoundaryCollisionMixin.java
           test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.vsh
           test -f Veilbound-0.1.37-dev-source/src/main/resources/assets/veilbound/shaders/core/veil_boundary.fsh
 
