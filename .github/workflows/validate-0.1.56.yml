@@ -1,0 +1,201 @@
+name: Validate Veilbound 0.1.56
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-0156:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Set up Python texture dependency
+        shell: bash
+        run: python3 -m pip install --user pillow
+
+      - name: Reconstruct validated 0.1.52 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat ci-0152/buildpart-*.b64 | base64 --decode > build-0152.sh.xz
+          echo "d187b95648bb7fae8552686b30f38818d454e21dc52ed68d56a106319495a695  build-0152.sh.xz" | sha256sum -c -
+          xz -dc build-0152.sh.xz > build-0152.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('build-0152.sh')
+          s = p.read_text(encoding='utf-8')
+          texture_call = 'python3 texture-pass-0152.py\n'
+          vanilla = '''mkdir -p "$ROOT/.vanilla"\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAXklEQVR42gXBMQEAMAwEocqNgNuR8JYLb9uUruCRgLv0dFddBR6bsaF6Ucm2xTNAXddebGur4NVdV1R424xtoMewjW3zTuouUT2wgc2eyhR3XW9TVFR7CsC2PaBsxAdyLn2NNWHIVAAAAABJRU5ErkJggg==' | base64 --decode > "$ROOT/.vanilla/stone.png"\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAD1BMVEVkZGR5eXlRUVE9PUMvLzdi5EnwAAAAYUlEQVR42gXBAQHEIAwEweUUgIM0qYHPoaDgX9PPMDONKqlrR7pg6r1nm1Y5FuKkm0GxIj8ig6nX6dvIHtRJqvxIbnwzsvdB6tonF9RYVT2RH+QG74861yxq/xSDJb0PyR+e6w/hsG/r7QAAAABJRU5ErkJggg==' | base64 --decode > "$ROOT/.vanilla/deepslate.png"\n'''
+          if texture_call not in s:
+              raise SystemExit('texture generator call not found')
+          s = s.replace(texture_call, vanilla + texture_call, 1)
+          old_guard = "grep -q 'CompareOp.ALWAYS' \"$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderPipelines.java\"\n"
+          new_guard = "sed -i '/CompareOp.ALWAYS/d' \"$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderPipelines.java\"\n! grep -q 'CompareOp.ALWAYS' \"$ROOT/src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderPipelines.java\"\n"
+          if old_guard not in s:
+              raise SystemExit('expected hologram depth guard not found')
+          s = s.replace(old_guard, new_guard, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+          bash build-0152.sh
+
+      - name: Apply 0.1.55 and 0.1.56 overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_PROPS="$(find . -type f -name gradle.properties -exec grep -l '^mod_version=0.1.52-dev$' {} \; | head -n 1)"
+          test -n "$BASE_PROPS"
+          ROOT="$(dirname "$BASE_PROPS")"
+          echo "$ROOT" > "$GITHUB_WORKSPACE/.veilbound-0156-root"
+          echo "0.1.56 source root: $ROOT"
+
+          cat ci-0155/overlaypart-*.b64 | base64 --decode > overlay-0155.tar.xz
+          echo "7cda7d082b3cc4ac8b1c1b4d1c17840ff3b1dc533236712b4262edc791457051  overlay-0155.tar.xz" | sha256sum -c -
+          tar -xJf overlay-0155.tar.xz -C "$ROOT"
+          patch -p1 -d "$ROOT" < ci-0155/compilefix-0155.patch
+
+          base64 --decode ci-0156/overlay-0156.patch.xz.b64 > overlay-0156.patch.xz
+          echo "4ce404c78160b95dc9ce3b965cc0ad9c49616893b1a3d659a7783e32720cea8a  overlay-0156.patch.xz" | sha256sum -c -
+          xz -dc overlay-0156.patch.xz > overlay-0156.patch
+          patch -p1 -d "$ROOT" < overlay-0156.patch
+          grep -q '^mod_version=0.1.56-dev$' "$ROOT/gradle.properties"
+
+          cd "$ROOT"
+          python3 tools_texture_pass.py
+          python3 tools_item_concept_pass.py
+          python3 tools_armor_texture_pass.py
+
+      - name: Audit 0.1.56 resources and source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(cat "$GITHUB_WORKSPACE/.veilbound-0156-root")"
+          cd "$ROOT"
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import hashlib, json
+          resources = Path('src/main/resources')
+          assets = resources / 'assets/veilbound'
+          recipes = resources / 'data/veilbound/veilbound/engineering_recipes'
+          json_files = list(resources.rglob('*.json'))
+          mcmeta_files = list(resources.rglob('*.mcmeta'))
+          for p in json_files + mcmeta_files:
+              json.loads(p.read_text(encoding='utf-8'))
+          assert len(json_files) >= 627, len(json_files)
+          assert len(json_files) + len(mcmeta_files) >= 701
+          assert len(list(recipes.glob('*.json'))) == 120
+          item_pngs = sorted((assets/'textures/item').glob('*.png'))
+          block_pngs = sorted((assets/'textures/block').glob('*.png'))
+          assert len(item_pngs) == 110, len(item_pngs)
+          assert len(block_pngs) == 32, len(block_pngs)
+          assert len(list(assets.rglob('*.png.mcmeta'))) == 74
+          for name in ['resonant_ore','phase_ore','mnemonic_crystal_ore','causalite_ore','axiomite_ore','paradox_ore']:
+              for prefix in ('','deepslate_'):
+                  p=assets/'textures/block'/f'{prefix}{name}.png'
+                  im=Image.open(p).convert('RGBA')
+                  assert min(im.getchannel('A').getdata()) == 255, p
+          hashes={}
+          for p in item_pngs+block_pngs:
+              hashes.setdefault(hashlib.sha256(p.read_bytes()).hexdigest(),[]).append(str(p))
+          duplicates=[v for v in hashes.values() if len(v)>1]
+          assert not duplicates, duplicates
+          print(f'VEILBOUND_0156_RESOURCE_AUDIT=PASS json={len(json_files)} mcmeta={len(mcmeta_files)} recipes=120')
+          PY
+
+          grep -q 'class VeilLanceRenderer' src/main/java/dev/futurae/veilbound/client/render/VeilLanceRenderer.java
+          grep -q 'DirectionProperty FACING' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
+          grep -q 'BooleanProperty CHARGING' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
+          grep -q 'BooleanProperty OVERDRIVE' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
+          grep -q 'VeilLanceBlock.collisionBoxes' src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java
+          grep -q 'new VeilLanceRenderer' src/main/java/dev/futurae/veilbound/client/VeilboundClient.java
+          grep -q 'Split archive wings' src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java
+          grep -q 'four-jaw containment yoke' src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java
+          ! grep -q 'box(out, pose, 0.39, 0.36, 0.39, 0.61, 2.42, 0.61' src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java
+          ! grep -q 'box(out, pose, 0.34, 2.25, 0.34, 0.66, 2.72, 0.66' src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java
+          echo VEILBOUND_0156_SOURCE_AUDIT=PASS
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(cat "$GITHUB_WORKSPACE/.veilbound-0156-root")"
+          cd "$ROOT"
+          java -version
+          gradle --version
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.56-dev.jar
+          unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/client/render/VeilLanceRenderer.class'
+          unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/block/VeilLanceBlock.class'
+          unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/block/entity/VeilLanceBlockEntity.class'
+          unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.class'
+          RECIPES="$(unzip -Z1 Veilbound-0.1.56-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
+          test "$RECIPES" -eq 120
+          echo "VEILBOUND_0156_JAR_AUDIT=PASS recipes=$RECIPES" | tee "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-audit.txt"
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0156"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev.jar" mods/
+          set +e
+          timeout 180s bash run.sh nogui > "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log" 2>&1
+          RC=$?
+          set -e
+          test "$RC" -eq 0 -o "$RC" -eq 124
+          grep -E 'Done \([0-9.]+s\)!' "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log"
+          ! grep -E 'Failed to load|ModLoadingException|Exception in thread "main"|Crash report' "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.56-dev.jar Veilbound-0.1.56-dev-server-smoke.log > Veilbound-0.1.56-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.56-dev-diagnostics
+          path: |
+            Veilbound-0.1.56-dev.jar
+            Veilbound-0.1.56-dev-audit.txt
+            Veilbound-0.1.56-dev-SHA256SUMS.txt
+            Veilbound-0.1.56-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.56-dev-final
+          path: |
+            Veilbound-0.1.56-dev.jar
+            Veilbound-0.1.56-dev-audit.txt
+            Veilbound-0.1.56-dev-SHA256SUMS.txt
+            Veilbound-0.1.56-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30
