@@ -1,0 +1,80 @@
+--- a/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
++++ b/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
+@@ -13,6 +13,7 @@
+ import net.minecraft.client.model.geom.builders.LayerDefinition;
+ import net.minecraft.client.model.geom.builders.MeshDefinition;
+ import net.minecraft.client.model.geom.builders.PartDefinition;
++import net.minecraft.client.renderer.entity.layers.EquipmentLayerRenderer;
+ import net.minecraft.client.renderer.entity.state.HumanoidRenderState;
+ import net.minecraft.client.resources.model.EquipmentClientInfo;
+ import net.minecraft.resources.Identifier;
+@@ -103,9 +104,69 @@
+                 configureSlotVisibility(model, stack);
+                 return model;
+             }
++
++            @Override
++            public int getArmorLayerTintColor(
++                    ItemStack stack, EquipmentClientInfo.Layer layer, int layerIdx, int fallbackColor) {
++                int vanillaColor = EquipmentLayerRenderer.getColorForLayer(layer, fallbackColor);
++                return animatedMaterialTint(motion, layerIdx, vanillaColor);
++            }
++        };
++    }
++
++    /**
++     * Time-varying material tint for the worn equipment overlay layers. The base armor texture
++     * remains neutral and readable; only the energy/pulse/prism layers breathe and phase-shift.
++     * This keeps the animation GPU-cheap (no per-frame texture uploads) while making the actual
++     * equipped material visibly animated in addition to the moving custom geometry.
++     */
++    private static int animatedMaterialTint(ArmorMotion motion, int layerIdx, int vanillaColor) {
++        if (layerIdx <= 0) return vanillaColor;
++
++        double t = System.nanoTime() * 1.0E-9D;
++        return switch (motion) {
++            case PHASEWEAVE -> layerIdx == 1
++                    ? rgbPulse(t, 2.55D, 0.82F, 0.96F, 1.00F, 0.24F)
++                    : vanillaColor;
++            case CAUSAL -> layerIdx == 1
++                    ? rgbPulse(t, 1.85D, 1.00F, 0.86F, 0.64F, 0.30F)
++                    : vanillaColor;
++            case SOVEREIGN -> {
++                if (layerIdx == 1) {
++                    yield rgbPulse(t, 1.45D, 0.88F, 0.78F, 1.00F, 0.28F);
++                }
++                if (layerIdx == 2) {
++                    yield sovereignPrismTint(t);
++                }
++                yield vanillaColor;
++            }
+         };
+     }
+ 
++    private static int rgbPulse(double time, double speed, float red, float green, float blue, float depth) {
++        float wave = 0.5F + 0.5F * (float) Math.sin(time * speed);
++        float brightness = 1.0F - depth + depth * wave;
++        return argb(
++                clamp255(255.0F * red * brightness),
++                clamp255(255.0F * green * brightness),
++                clamp255(255.0F * blue * brightness));
++    }
++
++    private static int sovereignPrismTint(double time) {
++        float r = 0.78F + 0.22F * (0.5F + 0.5F * (float) Math.sin(time * 1.20D));
++        float g = 0.72F + 0.28F * (0.5F + 0.5F * (float) Math.sin(time * 1.20D + 2.094395102D));
++        float b = 0.80F + 0.20F * (0.5F + 0.5F * (float) Math.sin(time * 1.20D + 4.188790205D));
++        return argb(clamp255(255.0F * r), clamp255(255.0F * g), clamp255(255.0F * b));
++    }
++
++    private static int argb(int red, int green, int blue) {
++        return 0xFF000000 | red << 16 | green << 8 | blue;
++    }
++
++    private static int clamp255(float value) {
++        return Math.max(0, Math.min(255, Math.round(value)));
++    }
++
+ 
+     /**
+      * Autonomous client-side motion for the worn armor geometry itself. Inventory sprites already
