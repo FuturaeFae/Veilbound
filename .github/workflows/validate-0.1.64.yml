@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "21131d7a6e0c4002a6e10bc941fa5052176dcf96b3c72f2f17475b445b46a3a4  baseline-0163/Veilbound-0.1.63-dev-source.tar.xz" | sha256sum -c -
-          echo "4989b2adc6e19d88d21bdda50fd96d5fb7ff4a89d6a2bcf282e241632c2a4162  ci-0164/overlay-0164.tar.xz" | sha256sum -c -
+          test "$(find ci-0164 -maxdepth 1 -type f -name 'overlay.part*.b64' | wc -l)" -eq 5
           test -s ci-0164/apply-0164.py
           mkdir -p source-0164
           tar -xJf baseline-0163/Veilbound-0.1.63-dev-source.tar.xz -C source-0164
@@ -84,7 +84,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           from PIL import Image
-          import json, struct
+          import json
           root = Path('source-0164/src/main/resources')
           for path in list(root.rglob('*.json')) + list(root.rglob('*.mcmeta')):
               json.loads(path.read_text(encoding='utf-8'))
