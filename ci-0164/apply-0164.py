@@ -1,5 +1,5 @@
 from pathlib import Path
-import sys, tarfile, hashlib
+import sys, tarfile, hashlib, json
 
 root = Path(sys.argv[1]).resolve()
 base = Path(__file__).parent / "bin"
@@ -21,3 +21,11 @@ with tarfile.open(overlay, "r:xz") as tf:
         if root not in dest.parents and dest != root:
             raise SystemExit(f"unsafe path: {member.name}")
     tf.extractall(root)
+
+# Make the intended pre-Core workflow unambiguous in the actual shipped GUI text.
+lang_path = root / "src/main/resources/assets/veilbound/lang/en_us.json"
+lang = json.loads(lang_path.read_text(encoding="utf-8"))
+lang["screen.veilbound.spatial_generator.mode.outside"] = (
+    "Outside-Domain preparation mode — charge/condense here, then enter your Domain to expand."
+)
+lang_path.write_text(json.dumps(lang, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
