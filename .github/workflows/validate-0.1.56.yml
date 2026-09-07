@@ -265,10 +265,15 @@ jobs:
           curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           echo 'eula=true' > eula.txt
+          cat > server.properties <<'EOF'
+          online-mode=false
+          server-port=25565
+          motd=Veilbound CI smoke
+          EOF
           cp "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev.jar" mods/
 
           # run.sh launches Java as a child. Put the complete launcher tree in its
-          # own process group so a successful smoke test can terminate cleanly.
+          # own process group so successful readiness can be observed and then cleaned up.
           setsid bash run.sh nogui > "$LOG" 2>&1 &
           SERVER_PID=$!
           SMOKE_OK=0
@@ -277,16 +282,17 @@ jobs:
               SMOKE_OK=1
               break
             fi
-            if grep -Eq 'Failed to load|ModLoadingException|Exception in thread "main"|Crash report' "$LOG"; then
-              break
-            fi
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then
               break
             fi
             sleep 1
           done
 
-          # Terminate the whole process group, not just the run.sh wrapper.
+          # Preserve the readiness result before cleanup. Cleanup is strictly best-effort.
+          SMOKE_STATUS=1
+          if [ "$SMOKE_OK" -eq 1 ]; then
+            SMOKE_STATUS=0
+          fi
           kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
           for _ in $(seq 1 10); do
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -297,9 +303,14 @@ jobs:
           kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
           wait "$SERVER_PID" 2>/dev/null || true
 
-          test "$SMOKE_OK" -eq 1
+          if [ "$SMOKE_STATUS" -ne 0 ]; then
+            echo 'VEILBOUND_0156_SERVER_SMOKE=FAIL'
+            tail -n 200 "$LOG" || true
+            exit 1
+          fi
           grep -E 'Done \([0-9.]+s\)!' "$LOG"
-          ! grep -E 'Failed to load|ModLoadingException|Exception in thread "main"|Crash report' "$LOG"
+          ! grep -E 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"
+          echo 'VEILBOUND_0156_SERVER_SMOKE=PASS'
           cd "$GITHUB_WORKSPACE"
           sha256sum Veilbound-0.1.56-dev.jar Veilbound-0.1.56-dev-source.tar.xz Veilbound-0.1.56-dev-server-smoke.log > Veilbound-0.1.56-dev-SHA256SUMS.txt
 
