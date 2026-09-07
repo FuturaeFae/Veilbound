@@ -6,8 +6,9 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   validate:
-    uses: ./.github/workflows/validate-0.1.56.yml
+    uses: ./.github/workflows/validate-0.1.57.yml
     secrets: inherit
