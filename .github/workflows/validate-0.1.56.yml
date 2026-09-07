@@ -87,6 +87,10 @@ jobs:
             rm -f "$ROOT/README.md.rej"
           fi
 
+          # Minecraft/NeoForge 26.2 removed DirectionProperty. Keep the authored overlay
+          # immutable and apply the mapping migration as a small, auditable compatibility patch.
+          patch -p1 -d "$ROOT" < ci-0156/compilefix-0156.patch
+
           grep -q '^mod_version=0.1.56-dev$' "$ROOT/gradle.properties"
           cd "$ROOT"
           python3 tools_texture_pass.py
@@ -120,18 +124,19 @@ jobs:
           assert len(list(assets.rglob('*.png.mcmeta'))) == 74
           for name in ['resonant_ore','phase_ore','mnemonic_crystal_ore','causalite_ore','axiomite_ore','paradox_ore']:
               for prefix in ('','deepslate_'):
-                  p=assets/'textures/block'/f'{prefix}{name}.png'
-                  im=Image.open(p).convert('RGBA')
+                  p = assets/'textures/block'/f'{prefix}{name}.png'
+                  im = Image.open(p).convert('RGBA')
                   assert min(im.getchannel('A').getdata()) == 255, p
-          hashes={}
-          for p in item_pngs+block_pngs:
-              hashes.setdefault(hashlib.sha256(p.read_bytes()).hexdigest(),[]).append(str(p))
-          assert not [v for v in hashes.values() if len(v)>1]
+          hashes = {}
+          for p in item_pngs + block_pngs:
+              hashes.setdefault(hashlib.sha256(p.read_bytes()).hexdigest(), []).append(str(p))
+          assert not [v for v in hashes.values() if len(v) > 1]
           print(f'VEILBOUND_0156_RESOURCE_AUDIT=PASS json={len(json_files)} mcmeta={len(mcmeta_files)} recipes=120')
           PY
 
           grep -q 'class VeilLanceRenderer' src/main/java/dev/futurae/veilbound/client/render/VeilLanceRenderer.java
-          grep -q 'DirectionProperty FACING' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
+          grep -q 'EnumProperty<Direction> FACING = BlockStateProperties.FACING' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
+          ! grep -q 'DirectionProperty' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
           grep -q 'BooleanProperty CHARGING' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
           grep -q 'BooleanProperty OVERDRIVE' src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
           grep -q 'VeilLanceBlock.collisionBoxes' src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java
@@ -145,6 +150,7 @@ jobs:
       - name: Java 25 Gradle build and packaged JAR audit
         shell: bash
         run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build.log") 2>&1
           set -euo pipefail
           ROOT="$(cat "$GITHUB_WORKSPACE/.veilbound-0156-root")"
           cd "$ROOT"
@@ -167,6 +173,7 @@ jobs:
       - name: Exact-JAR NeoForge 26.2.0.75 server smoke
         shell: bash
         run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup.log") 2>&1
           set -euo pipefail
           SERVER="$GITHUB_WORKSPACE/server-0156"
           mkdir -p "$SERVER/mods"
@@ -191,6 +198,8 @@ jobs:
         with:
           name: Veilbound-0.1.56-dev-diagnostics
           path: |
+            03-gradle-build.log
+            04-server-setup.log
             Veilbound-0.1.56-dev.jar
             Veilbound-0.1.56-dev-audit.txt
             Veilbound-0.1.56-dev-SHA256SUMS.txt
