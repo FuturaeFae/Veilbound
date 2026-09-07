@@ -1,0 +1,176 @@
+name: Validate Veilbound 0.1.61
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0161:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact 0.1.60 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.60-dev-final
+          path: baseline-0160
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34097397398
+
+      - name: Reconstruct 0.1.61 Boundary Dynamo and ore pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "95e179f1a82fa20ee98d4cecdcf6ecaa33439f7637c171e003dfc57955c0bf6c  baseline-0160/Veilbound-0.1.60-dev-source.tar.xz" | sha256sum -c -
+          test -s ci-0161/apply-0161.py
+          test -s ci-0161/BoundaryDynamoBlock.java
+          test -s ci-0161/BoundaryDynamoBlockEntity.java
+          mkdir -p source-0161
+          tar -xJf baseline-0160/Veilbound-0.1.60-dev-source.tar.xz -C source-0161
+          python3 ci-0161/apply-0161.py source-0161
+          grep -q '^mod_version=0.1.61-dev$' source-0161/gradle.properties
+
+      - name: Audit 0.1.61 source and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          BE=source-0161/src/main/java/dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.java
+          BLOCK=source-0161/src/main/java/dev/futurae/veilbound/block/BoundaryDynamoBlock.java
+          grep -q 'CHARGE_SLOT = 1' "$BE"
+          grep -q 'FE_CAPACITY = 500_000' "$BE"
+          grep -q 'FE_PER_BURN_TICK = 80' "$BE"
+          grep -q 'Capabilities.Energy.ITEM' "$BE"
+          grep -q 'ChestMenu.oneRow' "$BE"
+          grep -q 'BoundaryDynamoBlockEntity::tick' "$BLOCK"
+          test -f source-0161/src/main/resources/data/veilbound/recipe/boundary_dynamo.json
+          test -f source-0161/docs/0.1.61-validation.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, struct
+          resources=Path('source-0161/src/main/resources')
+          for path in list(resources.rglob('*.json')) + list(resources.rglob('*.mcmeta')):
+              json.loads(path.read_text(encoding='utf-8'))
+          recipe=json.loads((resources/'data/veilbound/recipe/boundary_dynamo.json').read_text())
+          assert recipe['result']['id']=='veilbound:boundary_dynamo'
+          names=['resonant','phase','mnemonic_crystal','causalite','axiomite','paradox']
+          for name in names:
+              for prefix in ('','deepslate_'):
+                  p=resources/f'assets/veilbound/textures/block/{prefix}{name}_ore.png'
+                  data=p.read_bytes()
+                  assert data[:8]==b'\x89PNG\r\n\x1a\n'
+                  assert struct.unpack('>II',data[16:24])==(16,128), (p,struct.unpack('>II',data[16:24]))
+          dyn=resources/'assets/veilbound/textures/block/boundary_dynamo.png'
+          assert struct.unpack('>II',dyn.read_bytes()[16:24])==(16,16)
+          recipes=resources/'data/veilbound/veilbound/engineering_recipes'
+          assert len(list(recipes.glob('*.json')))==120
+          print('VEILBOUND_0161_RESOURCE_AUDIT=PASS')
+          PY
+          echo VEILBOUND_0161_SOURCE_AUDIT=PASS
+
+      - name: Package 0.1.61 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0161 -cJf Veilbound-0.1.61-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./.vanilla' --exclude='./run' .
+          test -s Veilbound-0.1.61-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0161.log") 2>&1
+          set -euo pipefail
+          cd source-0161
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.61-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.61-dev.jar
+          unzip -Z1 Veilbound-0.1.61-dev.jar | grep -q 'dev/futurae/veilbound/block/BoundaryDynamoBlock.class'
+          unzip -Z1 Veilbound-0.1.61-dev.jar | grep -q 'dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.class'
+          unzip -Z1 Veilbound-0.1.61-dev.jar | grep -q 'data/veilbound/recipe/boundary_dynamo.json'
+          unzip -Z1 Veilbound-0.1.61-dev.jar | grep -q 'assets/veilbound/textures/block/boundary_dynamo.png'
+          RECIPES="$(unzip -Z1 Veilbound-0.1.61-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
+          test "$RECIPES" -eq 120
+          echo "VEILBOUND_0161_JAR_AUDIT=PASS recipes=$RECIPES boundary_dynamo=present ores=16x128" | tee Veilbound-0.1.61-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0161.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0161"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.61-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.61 CI smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.61-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then SMOKE_OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$SMOKE_OK" -ne 1 ]; then tail -n 200 "$LOG" || true; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0161_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.61-dev.jar Veilbound-0.1.61-dev-source.tar.xz Veilbound-0.1.61-dev-server-smoke.log > Veilbound-0.1.61-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.61-dev-diagnostics
+          path: |
+            03-gradle-build-0161.log
+            04-server-setup-0161.log
+            Veilbound-0.1.61-dev.jar
+            Veilbound-0.1.61-dev-source.tar.xz
+            Veilbound-0.1.61-dev-audit.txt
+            Veilbound-0.1.61-dev-SHA256SUMS.txt
+            Veilbound-0.1.61-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.61-dev-final
+          path: |
+            Veilbound-0.1.61-dev.jar
+            Veilbound-0.1.61-dev-source.tar.xz
+            Veilbound-0.1.61-dev-audit.txt
+            Veilbound-0.1.61-dev-SHA256SUMS.txt
+            Veilbound-0.1.61-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30
