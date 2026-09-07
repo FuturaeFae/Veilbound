@@ -41,8 +41,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "21131d7a6e0c4002a6e10bc941fa5052176dcf96b3c72f2f17475b445b46a3a4  baseline-0163/Veilbound-0.1.63-dev-source.tar.xz" | sha256sum -c -
-          test "$(find ci-0164 -maxdepth 1 -type f -name 'overlay.part*.b64' | wc -l)" -eq 5
           test -s ci-0164/apply-0164.py
+          test "$(find ci-0164/bin -maxdepth 1 -type f | wc -l)" -eq 17
           mkdir -p source-0164
           tar -xJf baseline-0163/Veilbound-0.1.63-dev-source.tar.xz -C source-0164
           python3 ci-0164/apply-0164.py source-0164
