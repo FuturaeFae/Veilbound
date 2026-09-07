@@ -1,21 +1,23 @@
 from pathlib import Path
-import base64, hashlib, io, sys, tarfile
+import sys, tarfile, hashlib
 
 root = Path(sys.argv[1]).resolve()
-ci_dir = Path(__file__).resolve().parent
-parts = sorted(ci_dir.glob('overlay.part*.b64'))
-if len(parts) != 5:
-    raise SystemExit(f'expected 5 overlay chunks, found {len(parts)}')
-encoded = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
-data = base64.b64decode(encoded, validate=True)
-digest = hashlib.sha256(data).hexdigest()
-expected = '4989b2adc6e19d88d21bdda50fd96d5fb7ff4a89d6a2bcf282e241632c2a4162'
-if digest != expected:
-    raise SystemExit(f'overlay checksum mismatch: {digest} != {expected}')
-with tarfile.open(fileobj=io.BytesIO(data), mode='r:xz') as tf:
+base = Path(__file__).parent / "bin"
+parts = [
+    "part00", "part01", "part02", "part03", "part04", "part05", "part06",
+    "part0708", "part0910", "part1112", "part1314", "part1516",
+    "part1718", "part1920", "part2122", "part2324", "part2526",
+]
+data = b"".join((base / name).read_bytes() for name in parts)
+expected = "4989b2adc6e19d88d21bdda50fd96d5fb7ff4a89d6a2bcf282e241632c2a4162"
+actual = hashlib.sha256(data).hexdigest()
+if actual != expected:
+    raise SystemExit(f"overlay checksum mismatch: {actual} != {expected}")
+overlay = Path(__file__).with_name("overlay-0164.reconstructed.tar.xz")
+overlay.write_bytes(data)
+with tarfile.open(overlay, "r:xz") as tf:
     for member in tf.getmembers():
         dest = (root / member.name).resolve()
         if root not in dest.parents and dest != root:
-            raise SystemExit(f'unsafe path: {member.name}')
+            raise SystemExit(f"unsafe path: {member.name}")
     tf.extractall(root)
-print(f'VEILBOUND_0164_OVERLAY=PASS sha256={digest} parts={len(parts)}')
