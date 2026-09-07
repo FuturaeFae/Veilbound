@@ -1,0 +1,216 @@
+name: Validate Veilbound 0.1.64
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0164:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact 0.1.63 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.63-dev-final
+          path: baseline-0163
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34108262522
+
+      - name: Reconstruct 0.1.64 Matter/Spatial/ore pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "21131d7a6e0c4002a6e10bc941fa5052176dcf96b3c72f2f17475b445b46a3a4  baseline-0163/Veilbound-0.1.63-dev-source.tar.xz" | sha256sum -c -
+          echo "4989b2adc6e19d88d21bdda50fd96d5fb7ff4a89d6a2bcf282e241632c2a4162  ci-0164/overlay-0164.tar.xz" | sha256sum -c -
+          test -s ci-0164/apply-0164.py
+          mkdir -p source-0164
+          tar -xJf baseline-0163/Veilbound-0.1.63-dev-source.tar.xz -C source-0164
+          python3 ci-0164/apply-0164.py source-0164
+          grep -q '^mod_version=0.1.64-dev$' source-0164/gradle.properties
+
+      - name: Audit 0.1.64 source, Matter tooltip, Spatial prep, and ore bases
+        shell: bash
+        run: |
+          set -euo pipefail
+          NET=source-0164/src/main/java/dev/futurae/veilbound/platform/neoforge/network/NeoForgeNetworking.java
+          CLIENT=source-0164/src/main/java/dev/futurae/veilbound/client/VeilboundClient.java
+          SPATIAL=source-0164/src/main/java/dev/futurae/veilbound/platform/neoforge/precore/NeoForgeSpatialGeneratorController.java
+          SCREEN=source-0164/src/main/java/dev/futurae/veilbound/client/screen/SpatialGeneratorScreen.java
+          SNAPSHOT=source-0164/src/main/java/dev/futurae/veilbound/network/SpatialGeneratorSnapshotPayload.java
+          DYNAMO=source-0164/src/main/java/dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.java
+          grep -q 'PROTOCOL = "18"' "$NET"
+          grep -q 'MatterValueRequestPayload.TYPE' "$NET"
+          grep -q 'MatterValueSnapshotPayload.TYPE' "$NET"
+          grep -q 'MatterCatalogInvalidatedPayload.TYPE' "$NET"
+          grep -q 'onItemTooltip' "$CLIENT"
+          grep -q 'tooltip.veilbound.matter' "$CLIENT"
+          grep -q 'MatterTooltipClientState.beginRequest' "$CLIENT"
+          grep -q 'boolean domainAction' "$SPATIAL"
+          grep -q 'Charging and Matter condensation are intentionally overworld/outside-Domain preparation' "$SPATIAL"
+          grep -q 'feedMatterValue' "$SNAPSHOT"
+          grep -q 'snapshot.inOwnDomain() && canExpandX()' "$SCREEN"
+          grep -q 'mode.outside' "$SCREEN"
+          grep -q 'feed_matter' "$SCREEN"
+          grep -q 'ItemAccess.forHandlerIndexStrict(itemHandler, CHARGE_SLOT)' "$DYNAMO"
+          grep -q 'chargeFaultCooldown = 100' "$DYNAMO"
+          grep -q 'Never let a malformed or stateful item-energy capability crash the server tick loop' "$DYNAMO"
+          test -f source-0164/docs/0.1.64-validation.md
+
+          python3 -m pip install --quiet pillow
+          curl -fsSL -o /tmp/stone-26.2.png https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/26.2/assets/minecraft/textures/block/stone.png
+          curl -fsSL -o /tmp/deepslate-26.2.png https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/26.2/assets/minecraft/textures/block/deepslate.png
+          echo "b5e10adc72442bfb257ce7ba0b9bbe36475a0c8cdfec89b80dc9517203ff3e9f  /tmp/stone-26.2.png" | sha256sum -c -
+          echo "dc72c722bec23c929817fab7cc56e08e5e828ae3607fbfb7e7730e68b67d4cfc  /tmp/deepslate-26.2.png" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json, struct
+          root = Path('source-0164/src/main/resources')
+          for path in list(root.rglob('*.json')) + list(root.rglob('*.mcmeta')):
+              json.loads(path.read_text(encoding='utf-8'))
+          lang = json.loads((root / 'assets/veilbound/lang/en_us.json').read_text(encoding='utf-8'))
+          assert lang['tooltip.veilbound.matter'] == 'Matter: %s'
+          assert 'outside' in lang['screen.veilbound.spatial_generator.mode.outside'].lower()
+          recipes = list((root / 'data/veilbound/veilbound/engineering_recipes').glob('*.json'))
+          assert len(recipes) == 120, len(recipes)
+          stone = Image.open('/tmp/stone-26.2.png').convert('RGBA')
+          deep = Image.open('/tmp/deepslate-26.2.png').convert('RGBA')
+          assert stone.size == deep.size == (16, 16)
+          block = root / 'assets/veilbound/textures/block'
+          names = ['resonant','phase','mnemonic_crystal','paradox','causalite','axiomite']
+          masks = []
+          for name in names:
+              s = Image.open(block / f'{name}_ore.png').convert('RGBA')
+              d = Image.open(block / f'deepslate_{name}_ore.png').convert('RGBA')
+              assert s.size == d.size == (16, 128)
+              stable_s = stable_d = None
+              for frame in range(8):
+                  sf = s.crop((0, frame*16, 16, (frame+1)*16))
+                  df = d.crop((0, frame*16, 16, (frame+1)*16))
+                  sm = {(x,y) for y in range(16) for x in range(16) if sf.getpixel((x,y)) != stone.getpixel((x,y))}
+                  dm = {(x,y) for y in range(16) for x in range(16) if df.getpixel((x,y)) != deep.getpixel((x,y))}
+                  if frame == 0: stable_s, stable_d = sm, dm
+                  assert sm == stable_s, (name, 'stone ore mask moved between frames', frame)
+                  assert dm == stable_d, (name, 'deepslate ore mask moved between frames', frame)
+              assert stable_s == stable_d, (name, 'stone/deepslate masks differ')
+              assert 25 <= len(stable_s) <= 60, (name, len(stable_s))
+              xs=[x for x,y in stable_s]; ys=[y for x,y in stable_s]
+              assert max(xs)-min(xs) >= 11 and max(ys)-min(ys) >= 11, (name, 'deposit not spread enough')
+              masks.append(frozenset(stable_s))
+          assert len(set(masks)) == 6, 'ore masks are recolors/duplicates'
+          print('VEILBOUND_0164_RESOURCE_AUDIT=PASS ores=12 unique_masks=6 engineering_recipes=120 vanilla_bases=exact')
+          PY
+          echo VEILBOUND_0164_SOURCE_AUDIT=PASS
+
+      - name: Package 0.1.64 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0164 -cJf Veilbound-0.1.64-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./.vanilla' --exclude='./run' .
+          test -s Veilbound-0.1.64-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0164.log") 2>&1
+          set -euo pipefail
+          cd source-0164
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.64-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.64-dev.jar
+          unzip -Z1 Veilbound-0.1.64-dev.jar | grep -q 'dev/futurae/veilbound/client/MatterTooltipClientState.class'
+          unzip -Z1 Veilbound-0.1.64-dev.jar | grep -q 'dev/futurae/veilbound/network/MatterValueRequestPayload.class'
+          unzip -Z1 Veilbound-0.1.64-dev.jar | grep -q 'dev/futurae/veilbound/network/MatterValueSnapshotPayload.class'
+          unzip -Z1 Veilbound-0.1.64-dev.jar | grep -q 'dev/futurae/veilbound/network/MatterCatalogInvalidatedPayload.class'
+          unzip -Z1 Veilbound-0.1.64-dev.jar | grep -q 'dev/futurae/veilbound/client/screen/SpatialGeneratorScreen.class'
+          unzip -Z1 Veilbound-0.1.64-dev.jar | grep -q 'dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.class'
+          RECIPES="$(unzip -Z1 Veilbound-0.1.64-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
+          ORES="$(unzip -Z1 Veilbound-0.1.64-dev.jar | grep -c '^assets/veilbound/textures/block/.*ore\.png$')"
+          test "$RECIPES" -eq 120
+          test "$ORES" -eq 12
+          echo "VEILBOUND_0164_JAR_AUDIT=PASS engineering_recipes=$RECIPES ore_sheets=$ORES matter_tooltips=present spatial_outside_prep=present repeat_charge_fix=present" | tee Veilbound-0.1.64-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0164.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0164"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.64-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.64 CI smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.64-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then SMOKE_OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$SMOKE_OK" -ne 1 ]; then tail -n 200 "$LOG" || true; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0164_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.64-dev.jar Veilbound-0.1.64-dev-source.tar.xz Veilbound-0.1.64-dev-server-smoke.log > Veilbound-0.1.64-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.64-dev-diagnostics
+          path: |
+            03-gradle-build-0164.log
+            04-server-setup-0164.log
+            Veilbound-0.1.64-dev.jar
+            Veilbound-0.1.64-dev-source.tar.xz
+            Veilbound-0.1.64-dev-audit.txt
+            Veilbound-0.1.64-dev-SHA256SUMS.txt
+            Veilbound-0.1.64-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.64-dev-final
+          path: |
+            Veilbound-0.1.64-dev.jar
+            Veilbound-0.1.64-dev-source.tar.xz
+            Veilbound-0.1.64-dev-audit.txt
+            Veilbound-0.1.64-dev-SHA256SUMS.txt
+            Veilbound-0.1.64-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30
