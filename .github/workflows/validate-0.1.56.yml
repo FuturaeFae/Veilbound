@@ -267,7 +267,9 @@ jobs:
           echo 'eula=true' > eula.txt
           cp "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev.jar" mods/
 
-          bash run.sh nogui > "$LOG" 2>&1 &
+          # run.sh launches Java as a child. Put the complete launcher tree in its
+          # own process group so a successful smoke test can terminate cleanly.
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
           SERVER_PID=$!
           SMOKE_OK=0
           for _ in $(seq 1 180); do
@@ -283,7 +285,16 @@ jobs:
             fi
             sleep 1
           done
-          kill "$SERVER_PID" 2>/dev/null || true
+
+          # Terminate the whole process group, not just the run.sh wrapper.
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          for _ in $(seq 1 10); do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
           wait "$SERVER_PID" 2>/dev/null || true
 
           test "$SMOKE_OK" -eq 1
