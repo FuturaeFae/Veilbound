@@ -1,8 +1,7 @@
 name: Validate Veilbound 0.1.55
 
 on:
-  pull_request:
-    branches: [ main ]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -17,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
@@ -60,7 +59,7 @@ jobs:
           PY
           bash build-0152.sh
 
-      - name: Apply 0.1.55 overlay and run resource audit
+      - name: Apply 0.1.55 overlay and compile fix
         shell: bash
         run: |
           exec > >(tee "$GITHUB_WORKSPACE/02-overlay-audit.log") 2>&1
@@ -74,7 +73,9 @@ jobs:
           cat ci-0155/overlaypart-*.b64 | base64 --decode > overlay-0155.tar.xz
           echo "7cda7d082b3cc4ac8b1c1b4d1c17840ff3b1dc533236712b4262edc791457051  overlay-0155.tar.xz" | sha256sum -c -
           tar -xJf overlay-0155.tar.xz -C "$ROOT"
+          patch -p1 -d "$ROOT" < ci-0155/compilefix-0155.patch
           grep -q '^mod_version=0.1.55-dev$' "$ROOT/gradle.properties"
+          grep -q 'private static AABB coreBox' "$ROOT/src/main/java/dev/futurae/veilbound/block/DimensionalCoreBlock.java"
 
           cd "$ROOT"
           python3 tools_texture_pass.py
@@ -93,15 +94,11 @@ jobs:
           for p in json_files + mcmeta_files:
               json.loads(p.read_text(encoding='utf-8'))
           print('JSON', len(json_files), 'MCMETA', len(mcmeta_files), 'TOTAL', len(json_files)+len(mcmeta_files))
-          # 0.1.52's validated resource baseline is 627 JSON + 74 mcmeta = 701.
-          # 0.1.55 adds renderer/preferences code and generated texture art, so requiring
-          # four nonexistent JSON files makes the validator fail before Java compilation.
           assert len(json_files) >= 627, len(json_files)
           assert len(json_files) + len(mcmeta_files) >= 701
           assert len(list(recipes.glob('*.json'))) == 120
           item_pngs = sorted((assets/'textures/item').glob('*.png'))
           block_pngs = sorted((assets/'textures/block').glob('*.png'))
-          print('ITEMS', len(item_pngs), 'BLOCKS', len(block_pngs))
           assert len(item_pngs) == 110, len(item_pngs)
           assert len(block_pngs) == 32, len(block_pngs)
           assert len(list(assets.rglob('*.png.mcmeta'))) == 74
@@ -124,8 +121,8 @@ jobs:
           hashes={}
           for p in item_pngs+block_pngs:
               hashes.setdefault(hashlib.sha256(p.read_bytes()).hexdigest(),[]).append(str(p))
-          dup=[v for v in hashes.values() if len(v)>1]
-          assert not dup, dup
+          duplicates=[v for v in hashes.values() if len(v)>1]
+          assert not duplicates, duplicates
           print('VEILBOUND_0155_RESOURCE_AUDIT=PASS')
           PY
 
