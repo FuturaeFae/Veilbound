@@ -29,3 +29,14 @@ lang["screen.veilbound.spatial_generator.mode.outside"] = (
     "Outside-Domain preparation mode — charge/condense here, then enter your Domain to expand."
 )
 lang_path.write_text(json.dumps(lang, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+# Matter tooltips use vanilla chat Components; keep the import explicit in the final source.
+client_path = root / "src/main/java/dev/futurae/veilbound/client/VeilboundClient.java"
+client = client_path.read_text(encoding="utf-8")
+component_import = "import net.minecraft.network.chat.Component;\n"
+if component_import not in client:
+    anchor = "import net.minecraft.client.KeyMapping;\n"
+    if anchor not in client:
+        raise SystemExit("VeilboundClient import anchor missing")
+    client = client.replace(anchor, component_import + anchor, 1)
+client_path.write_text(client, encoding="utf-8")
