@@ -11,7 +11,9 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BaseContainerBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -93,7 +95,8 @@ public final class BoundaryDynamoBlockEntity extends BaseContainerBlockEntity {
         int duration = fuel.getBurnTime(null, level.fuelValues());
         if (duration <= 0) return false;
 
-        ItemStack remainder = fuel.getCraftingRemainder();
+        ItemStackTemplate remainderTemplate = fuel.getCraftingRemainder();
+        ItemStack remainder = remainderTemplate == null ? ItemStack.EMPTY : remainderTemplate.create();
         fuel.shrink(1);
         if (fuel.isEmpty()) items.set(FUEL_SLOT, remainder);
         burnTicks = duration;
@@ -129,7 +132,7 @@ public final class BoundaryDynamoBlockEntity extends BaseContainerBlockEntity {
             return level != null && stack.getBurnTime(null, level.fuelValues()) > 0;
         }
         if (slot == CHARGE_SLOT) {
-            return stack.getCapability(Capabilities.Energy.ITEM) != null;
+            return ItemAccess.forStack(stack).getCapability(Capabilities.Energy.ITEM) != null;
         }
         return false;
     }
@@ -172,7 +175,7 @@ public final class BoundaryDynamoBlockEntity extends BaseContainerBlockEntity {
 
     @Override
     protected AbstractContainerMenu createMenu(int containerId, Inventory inventory) {
-        return ChestMenu.oneRow(containerId, inventory, this);
+        return new ChestMenu(MenuType.GENERIC_9x1, containerId, inventory, this, 1);
     }
 
     @Override
