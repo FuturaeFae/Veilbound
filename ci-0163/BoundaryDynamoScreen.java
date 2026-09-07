@@ -20,9 +20,7 @@ public final class BoundaryDynamoScreen extends AbstractContainerScreen<Boundary
     private static final int BURN_FILL = 0xFFF1A65A;
 
     public BoundaryDynamoScreen(BoundaryDynamoMenu menu, Inventory inventory, Component title) {
-        super(menu, inventory, title);
-        this.imageWidth = 236;
-        this.imageHeight = 196;
+        super(menu, inventory, title, 236, 196);
         this.inventoryLabelX = 37;
         this.inventoryLabelY = 100;
         this.titleLabelX = 12;
