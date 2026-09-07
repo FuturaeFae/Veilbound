@@ -175,6 +175,7 @@ public final class BoundaryDynamoBlockEntity extends BaseContainerBlockEntity {
 
     @Override
     protected AbstractContainerMenu createMenu(int containerId, Inventory inventory) {
+        // Minecraft 26.2 replacement for ChestMenu.oneRow: bind the one-row screen to this container.
         return new ChestMenu(MenuType.GENERIC_9x1, containerId, inventory, this, 1);
     }
 
