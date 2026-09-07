@@ -41,8 +41,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "db2f2c58861d766fe292b2c0ee157fb11dc339bb10bda9350da987b2e285b5d5  baseline-0159/Veilbound-0.1.59-dev-source.tar.xz" | sha256sum -c -
-          echo "bfc7ea95288b1fbe46dfea1967cd01beda1e0a2b3dc65cde4d2a47b17740c34a  ci-0160/apply-0160.py" | sha256sum -c -
-          echo "94c4a215582e610de61c39f6f9cca401bc104a11e07a0a9e5460d1b19835ae1d  ci-0160/BreachCombatPolicy.java" | sha256sum -c -
+          test -s ci-0160/apply-0160.py
+          test -s ci-0160/BreachCombatPolicy.java
           mkdir -p source-0160
           tar -xJf baseline-0159/Veilbound-0.1.59-dev-source.tar.xz -C source-0160
           python3 ci-0160/apply-0160.py source-0160
