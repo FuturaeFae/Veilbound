@@ -73,9 +73,6 @@ jobs:
           echo "4ce404c78160b95dc9ce3b965cc0ad9c49616893b1a3d659a7783e32720cea8a  overlay-0156.patch.xz" | sha256sum -c -
           xz -dc overlay-0156.patch.xz > overlay-0156.patch
 
-          # The encoded 0.1.52 reconstruction intentionally carries an older README than
-          # the complete 0.1.55 source package used to author the 0.1.56 overlay. Permit
-          # that one documentation reject only; any Java/resource reject still fails CI.
           set +e
           patch -p1 -d "$ROOT" < overlay-0156.patch
           PATCH_RC=$?
@@ -87,15 +84,74 @@ jobs:
             rm -f "$ROOT/README.md.rej"
           fi
 
-          # Minecraft/NeoForge 26.2 removed DirectionProperty. Keep the authored overlay
-          # immutable and apply the mapping migration as a small, auditable compatibility patch.
           patch -p1 -d "$ROOT" < ci-0156/compilefix-0156.patch
-
           grep -q '^mod_version=0.1.56-dev$' "$ROOT/gradle.properties"
+
           cd "$ROOT"
           python3 tools_texture_pass.py
           python3 tools_item_concept_pass.py
           python3 tools_armor_texture_pass.py
+
+      - name: Animate Threshold Frame
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(cat "$GITHUB_WORKSPACE/.veilbound-0156-root")"
+          cd "$ROOT"
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json, math
+
+          texture = Path('src/main/resources/assets/veilbound/textures/block/threshold_frame.png')
+          meta = texture.with_suffix(texture.suffix + '.mcmeta')
+          base = Image.open(texture).convert('RGBA')
+          width, height = base.size
+          if height != width:
+              base = base.crop((0, 0, width, width))
+
+          frames = []
+          source = base.load()
+          for frame in range(8):
+              out = base.copy()
+              pixels = out.load()
+              phase = math.tau * frame / 8.0
+              for y in range(width):
+                  for x in range(width):
+                      r, g, b, a = source[x, y]
+                      lum = r * 0.22 + g * 0.68 + b * 0.10
+                      mask = max(0.0, min(1.0, (lum - 72.0) / 52.0))
+                      if mask <= 0.0:
+                          continue
+                      spatial = 0.5 + 0.5 * math.sin(phase + (x + y) * 0.43)
+                      pulse = 0.35 + 0.65 * spatial
+                      mix = 0.5 + 0.5 * math.sin(phase * 0.73 + (x - y) * 0.27)
+                      target = (
+                          72 + 86 * mix,
+                          184 + 42 * (1.0 - mix),
+                          226 + 29 * mix,
+                      )
+                      strength = mask * (0.40 + 0.45 * pulse)
+                      pixels[x, y] = (
+                          min(255, int(r * (1.0 - strength) + target[0] * strength)),
+                          min(255, int(g * (1.0 - strength) + target[1] * strength)),
+                          min(255, int(b * (1.0 - strength) + target[2] * strength)),
+                          a,
+                      )
+              frames.append(out)
+
+          strip = Image.new('RGBA', (width, width * len(frames)), (0, 0, 0, 0))
+          for index, frame in enumerate(frames):
+              strip.paste(frame, (0, index * width))
+          strip.save(texture)
+          meta.write_text(json.dumps({
+              'animation': {
+                  'frametime': 3,
+                  'interpolate': True
+              }
+          }, indent=2) + '\n', encoding='utf-8')
+          print(f'VEILBOUND_THRESHOLD_ANIMATION=PASS frames={len(frames)} size={strip.size}')
+          PY
 
       - name: Audit 0.1.56 resources and source invariants
         shell: bash
@@ -107,31 +163,44 @@ jobs:
           from pathlib import Path
           from PIL import Image
           import hashlib, json
+
           resources = Path('src/main/resources')
           assets = resources / 'assets/veilbound'
           recipes = resources / 'data/veilbound/veilbound/engineering_recipes'
           json_files = list(resources.rglob('*.json'))
           mcmeta_files = list(resources.rglob('*.mcmeta'))
-          for p in json_files + mcmeta_files:
-              json.loads(p.read_text(encoding='utf-8'))
+          for path in json_files + mcmeta_files:
+              json.loads(path.read_text(encoding='utf-8'))
+
           assert len(json_files) >= 627, len(json_files)
-          assert len(json_files) + len(mcmeta_files) >= 701
+          assert len(json_files) + len(mcmeta_files) >= 702
           assert len(list(recipes.glob('*.json'))) == 120
-          item_pngs = sorted((assets/'textures/item').glob('*.png'))
-          block_pngs = sorted((assets/'textures/block').glob('*.png'))
+
+          item_pngs = sorted((assets / 'textures/item').glob('*.png'))
+          block_pngs = sorted((assets / 'textures/block').glob('*.png'))
           assert len(item_pngs) == 110, len(item_pngs)
           assert len(block_pngs) == 32, len(block_pngs)
-          assert len(list(assets.rglob('*.png.mcmeta'))) == 74
+          assert len(list(assets.rglob('*.png.mcmeta'))) == 75
+
+          threshold = assets / 'textures/block/threshold_frame.png'
+          threshold_meta = threshold.with_suffix(threshold.suffix + '.mcmeta')
+          with Image.open(threshold) as image:
+              assert image.width == 32 and image.height == 256, image.size
+          threshold_animation = json.loads(threshold_meta.read_text(encoding='utf-8'))['animation']
+          assert threshold_animation['frametime'] == 3
+          assert threshold_animation['interpolate'] is True
+
           for name in ['resonant_ore','phase_ore','mnemonic_crystal_ore','causalite_ore','axiomite_ore','paradox_ore']:
-              for prefix in ('','deepslate_'):
-                  p = assets/'textures/block'/f'{prefix}{name}.png'
-                  im = Image.open(p).convert('RGBA')
-                  assert min(im.getchannel('A').getdata()) == 255, p
+              for prefix in ('', 'deepslate_'):
+                  path = assets / 'textures/block' / f'{prefix}{name}.png'
+                  image = Image.open(path).convert('RGBA')
+                  assert min(image.getchannel('A').getdata()) == 255, path
+
           hashes = {}
-          for p in item_pngs + block_pngs:
-              hashes.setdefault(hashlib.sha256(p.read_bytes()).hexdigest(), []).append(str(p))
-          assert not [v for v in hashes.values() if len(v) > 1]
-          print(f'VEILBOUND_0156_RESOURCE_AUDIT=PASS json={len(json_files)} mcmeta={len(mcmeta_files)} recipes=120')
+          for path in item_pngs + block_pngs:
+              hashes.setdefault(hashlib.sha256(path.read_bytes()).hexdigest(), []).append(str(path))
+          assert not [paths for paths in hashes.values() if len(paths) > 1]
+          print(f'VEILBOUND_0156_RESOURCE_AUDIT=PASS json={len(json_files)} mcmeta={len(mcmeta_files)} recipes=120 threshold_frames=8')
           PY
 
           grep -q 'class VeilLanceRenderer' src/main/java/dev/futurae/veilbound/client/render/VeilLanceRenderer.java
@@ -146,6 +215,19 @@ jobs:
           ! grep -q 'box(out, pose, 0.39, 0.36, 0.39, 0.61, 2.42, 0.61' src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java
           ! grep -q 'box(out, pose, 0.34, 2.25, 0.34, 0.66, 2.72, 0.66' src/main/java/dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.java
           echo VEILBOUND_0156_SOURCE_AUDIT=PASS
+
+      - name: Package reconstructed 0.1.56 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(cat "$GITHUB_WORKSPACE/.veilbound-0156-root")"
+          tar -C "$ROOT" -cJf "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-source.tar.xz" \
+            --exclude='./build' \
+            --exclude='./.gradle' \
+            --exclude='./.vanilla' \
+            --exclude='./run' \
+            .
+          test -s "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-source.tar.xz"
 
       - name: Java 25 Gradle build and packaged JAR audit
         shell: bash
@@ -166,9 +248,10 @@ jobs:
           unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/block/VeilLanceBlock.class'
           unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/block/entity/VeilLanceBlockEntity.class'
           unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.class'
+          unzip -Z1 Veilbound-0.1.56-dev.jar | grep -q 'assets/veilbound/textures/block/threshold_frame.png.mcmeta'
           RECIPES="$(unzip -Z1 Veilbound-0.1.56-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
           test "$RECIPES" -eq 120
-          echo "VEILBOUND_0156_JAR_AUDIT=PASS recipes=$RECIPES" | tee "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-audit.txt"
+          echo "VEILBOUND_0156_JAR_AUDIT=PASS recipes=$RECIPES threshold_animation=present" | tee "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-audit.txt"
 
       - name: Exact-JAR NeoForge 26.2.0.75 server smoke
         shell: bash
@@ -176,21 +259,38 @@ jobs:
           exec > >(tee "$GITHUB_WORKSPACE/04-server-setup.log") 2>&1
           set -euo pipefail
           SERVER="$GITHUB_WORKSPACE/server-0156"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log"
           mkdir -p "$SERVER/mods"
           cd "$SERVER"
           curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
           java -jar neoforge-installer.jar --installServer
           echo 'eula=true' > eula.txt
           cp "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev.jar" mods/
-          set +e
-          timeout 180s bash run.sh nogui > "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log" 2>&1
-          RC=$?
-          set -e
-          test "$RC" -eq 0 -o "$RC" -eq 124
-          grep -E 'Done \([0-9.]+s\)!' "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log"
-          ! grep -E 'Failed to load|ModLoadingException|Exception in thread "main"|Crash report' "$GITHUB_WORKSPACE/Veilbound-0.1.56-dev-server-smoke.log"
+
+          bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then
+              SMOKE_OK=1
+              break
+            fi
+            if grep -Eq 'Failed to load|ModLoadingException|Exception in thread "main"|Crash report' "$LOG"; then
+              break
+            fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+
+          test "$SMOKE_OK" -eq 1
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          ! grep -E 'Failed to load|ModLoadingException|Exception in thread "main"|Crash report' "$LOG"
           cd "$GITHUB_WORKSPACE"
-          sha256sum Veilbound-0.1.56-dev.jar Veilbound-0.1.56-dev-server-smoke.log > Veilbound-0.1.56-dev-SHA256SUMS.txt
+          sha256sum Veilbound-0.1.56-dev.jar Veilbound-0.1.56-dev-source.tar.xz Veilbound-0.1.56-dev-server-smoke.log > Veilbound-0.1.56-dev-SHA256SUMS.txt
 
       - name: Upload diagnostics even on failure
         if: always()
@@ -201,6 +301,7 @@ jobs:
             03-gradle-build.log
             04-server-setup.log
             Veilbound-0.1.56-dev.jar
+            Veilbound-0.1.56-dev-source.tar.xz
             Veilbound-0.1.56-dev-audit.txt
             Veilbound-0.1.56-dev-SHA256SUMS.txt
             Veilbound-0.1.56-dev-server-smoke.log
@@ -214,6 +315,7 @@ jobs:
           name: Veilbound-0.1.56-dev-final
           path: |
             Veilbound-0.1.56-dev.jar
+            Veilbound-0.1.56-dev-source.tar.xz
             Veilbound-0.1.56-dev-audit.txt
             Veilbound-0.1.56-dev-SHA256SUMS.txt
             Veilbound-0.1.56-dev-server-smoke.log
