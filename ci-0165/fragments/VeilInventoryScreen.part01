@@ -31,7 +31,7 @@
 
         Button output = Button.builder(Component.literal(""), button -> {
                     if (!craftingPreview.craftable()) return;
-                    sendCraft(hasShiftDown()
+                    sendCraft(minecraft != null && minecraft.hasShiftDown()
                             ? VeilCraftingRequestPayload.Action.CRAFT_MAX
                             : VeilCraftingRequestPayload.Action.CRAFT_ONCE);
                 })
