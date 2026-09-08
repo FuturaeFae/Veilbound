@@ -3,6 +3,7 @@ import base64
 import gzip
 import hashlib
 import json
+import subprocess
 import sys
 
 root = Path(sys.argv[1]).resolve()
@@ -79,6 +80,27 @@ for kind in ('dimensional', 'resonant', 'phase', 'causal'):
     if legacy.exists():
         raise SystemExit(f'legacy flat transducer texture unexpectedly remained: {legacy.relative_to(root)}')
 
+# Final Veil/Core terminal visual pass. Keep the existing server-backed storage/crafting behavior,
+# but present it with the tightly framed slots and integrated scrollbar from the supplied reference.
+terminal_patch = ci / 'terminal-reference-ui.patch'
+if not terminal_patch.is_file():
+    raise SystemExit('missing terminal reference UI patch')
+subprocess.run(['patch', '-p1', '--batch', '-i', str(terminal_patch)], cwd=root, check=True)
+terminal = root / 'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java'
+terminal_text = terminal.read_text(encoding='utf-8')
+for marker in (
+    'SCROLL_WIDTH = 14',
+    'handleScrollBarClick',
+    'drawScrollArrow',
+    'Recess the virtual terminal grid as one dense tray',
+    'Stronger 18x18 bevel than the shared generic slot',
+):
+    if marker not in terminal_text:
+        raise SystemExit(f'terminal reference UI marker missing: {marker}')
+if 'Button previous = Button.builder' in terminal_text or 'Button next = Button.builder' in terminal_text:
+    raise SystemExit('old floating terminal page buttons remained')
+
 print(
     f'VEILBOUND_0167_TRANSDUCER_BE_FIX=PASS sha256={sha} bytes={len(raw)} '
     'models=raised_core textures=casing_panel_animated_core legacy_flat=absent')
+print('VEILBOUND_0167_TERMINAL_REFERENCE_UI=PASS slots=beveled grid=recessed scrollbar=integrated track_click=page_jump header=compact')
