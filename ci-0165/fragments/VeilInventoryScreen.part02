@@ -1,0 +1,152 @@
+    private MatterPatternPageService.SortMode activeSort() { return mode == Mode.INVENTORY ? inventorySort : craftingSort; }
+    private int activePage() { return mode == Mode.INVENTORY ? snapshot.page() : craftables.page(); }
+    private int activePageCount() { return mode == Mode.INVENTORY ? snapshot.pageCount() : craftables.pageCount(); }
+
+    private int panelLeft() { return Math.max(78, width / 2 - PANEL_WIDTH / 2); }
+    private int panelTop() { return Math.max(6, height / 2 - PANEL_HEIGHT / 2); }
+    private int gridLeft() { return panelLeft() + 8; }
+    private int gridTop() { return panelTop() + 54; }
+    private int scrollLeft() { return panelLeft() + 174; }
+    private int playerGridTop() { return panelTop() + 236; }
+    private int hotbarTop() { return panelTop() + 294; }
+    private int sideLeft() {
+        int candidate = panelLeft() - 74;
+        return candidate >= 4 ? candidate : panelLeft() + PANEL_WIDTH + 4;
+    }
+    private int sideTop() { return panelTop() + 104; }
+
+    @Override
+    public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        extractTransparentBackground(graphics);
+    }
+
+    @Override
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+        int left = panelLeft();
+        int top = panelTop();
+
+        drawVanillaPanel(graphics, left, top, PANEL_WIDTH, PANEL_HEIGHT);
+        drawInset(graphics, left + 8, top + 6, 198, 20);
+        graphics.centeredText(font,
+                Component.literal("Matter: " + NUMBERS.format(snapshot.storedMatter())),
+                left + 107, top + 12, 0xFF404040);
+
+        if (!snapshot.allowed()) {
+            graphics.centeredText(font,
+                    Component.translatable("screen.veilbound.veil_inventory.locked", snapshot.reason()),
+                    left + PANEL_WIDTH / 2, top + 100, 0xFFAA0000);
+            return;
+        }
+
+        if (mode == Mode.INVENTORY) renderInventoryGrid(graphics, mouseX, mouseY);
+        else renderCraftablesGrid(graphics, mouseX, mouseY);
+
+        renderScrollBar(graphics);
+        graphics.text(font, Component.translatable("screen.veilbound.veil_inventory.player_inventory"),
+                left + 8, top + 223, 0xFF404040, false);
+        renderPlayerInventory(graphics, mouseX, mouseY);
+
+        if (mode == Mode.CRAFTING) renderCraftingSide(graphics, mouseX, mouseY);
+    }
+
+    private void renderInventoryGrid(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        for (int i = 0; i < GRID_CAPACITY; i++) {
+            int x = gridLeft() + (i % GRID_COLUMNS) * SLOT;
+            int y = gridTop() + (i / GRID_COLUMNS) * SLOT;
+            drawSlot(graphics, x, y);
+            if (i >= snapshot.entries().size()) continue;
+            var entry = snapshot.entries().get(i);
+            ItemStack stack = entry.resource().toStack(1);
+            graphics.item(stack, x + 1, y + 1);
+            // Matter patterns are identities backed by the shared Matter pool, so deliberately do
+            // not draw a quantity. Exact unvalued stored stacks do show their real count.
+            if (entry.matterCost() <= 0 && entry.storedCount() > 1) {
+                drawCount(graphics, entry.storedCount(), x, y);
+            }
+            if (inside(mouseX, mouseY, x, y, SLOT, SLOT)) {
+                Component tip = entry.matterCost() > 0
+                        ? Component.literal(entry.resource().getHoverName().getString()
+                                + "\nMatter: " + NUMBERS.format(entry.matterCost())
+                                + "\nClick: withdraw up to a stack")
+                        : Component.literal(entry.resource().getHoverName().getString()
+                                + "\nStored: " + NUMBERS.format(entry.storedCount())
+                                + "\nClick: withdraw up to a stack");
+                graphics.setTooltipForNextFrame(font, tip, mouseX, mouseY);
+            }
+        }
+    }
+
+    private void renderCraftablesGrid(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        for (int i = 0; i < GRID_CAPACITY; i++) {
+            int x = gridLeft() + (i % GRID_COLUMNS) * SLOT;
+            int y = gridTop() + (i / GRID_COLUMNS) * SLOT;
+            drawSlot(graphics, x, y);
+            if (i >= craftables.entries().size()) continue;
+            var entry = craftables.entries().get(i);
+            ItemStack stack = entry.result().toStack(Math.max(1, entry.resultCount()));
+            graphics.item(stack, x + 1, y + 1);
+            if (!entry.craftable()) {
+                graphics.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0x55AA0000);
+            }
+            if (entry.resultCount() > 1) drawCount(graphics, entry.resultCount(), x, y);
+            if (inside(mouseX, mouseY, x, y, SLOT, SLOT)) {
+                Component tip = Component.literal(entry.result().getHoverName().getString()
+                        + (entry.craftable() ? "\nCraftable" : "\nMissing ingredients")
+                        + "\nClick: show recipe");
+                graphics.setTooltipForNextFrame(font, tip, mouseX, mouseY);
+            }
+        }
+    }
+
+    private void renderPlayerInventory(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        if (minecraft == null || minecraft.player == null) return;
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 9; col++) {
+                int slot = 9 + row * 9 + col;
+                int x = gridLeft() + col * SLOT;
+                int y = playerGridTop() + row * SLOT;
+                renderPlayerSlot(graphics, slot, x, y, mouseX, mouseY);
+            }
+        }
+        for (int col = 0; col < 9; col++) {
+            int x = gridLeft() + col * SLOT;
+            int y = hotbarTop();
+            renderPlayerSlot(graphics, col, x, y, mouseX, mouseY);
+        }
+    }
+
+    private void renderPlayerSlot(GuiGraphicsExtractor graphics, int slot, int x, int y, int mouseX, int mouseY) {
+        drawSlot(graphics, x, y);
+        ItemStack stack = minecraft.player.getInventory().getItem(slot);
+        if (stack == null || stack.isEmpty()) return;
+        graphics.item(stack, x + 1, y + 1);
+        if (stack.getCount() > 1) drawCount(graphics, stack.getCount(), x, y);
+        if (inside(mouseX, mouseY, x, y, SLOT, SLOT)) {
+            String action = mode == Mode.INVENTORY
+                    ? "Click: deposit stack"
+                    : selectedRecipe < 0 ? "Click: use as manual ingredient" : "Player inventory";
+            graphics.setTooltipForNextFrame(font,
+                    Component.literal(stack.getHoverName().getString() + "\n" + action), mouseX, mouseY);
+        }
+    }
+
+    private void renderScrollBar(GuiGraphicsExtractor graphics) {
+        int x = scrollLeft();
+        int y = gridTop();
+        int h = GRID_ROWS * SLOT;
+        graphics.fill(x, y, x + 14, y + h, 0xFF8B8B8B);
+        graphics.fill(x + 2, y + 16, x + 12, y + h - 16, 0xFF5C5C5C);
+        int pages = Math.max(1, activePageCount());
+        int track = h - 36;
+        int thumb = Math.max(10, track / pages);
+        int travel = Math.max(0, track - thumb);
+        int pos = pages <= 1 ? 0 : (int) Math.round((double) activePage() * travel / (pages - 1));
+        graphics.fill(x + 3, y + 18 + pos, x + 11, y + 18 + pos + thumb, 0xFFC6C6C6);
+        graphics.fill(x + 3, y + 18 + pos, x + 11, y + 19 + pos, 0xFFFFFFFF);
+        graphics.fill(x + 3, y + 17 + pos + thumb, x + 11, y + 18 + pos + thumb, 0xFF555555);
+    }
+
+    private void renderCraftingSide(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        int side = sideLeft();
+        int top = sideTop();
