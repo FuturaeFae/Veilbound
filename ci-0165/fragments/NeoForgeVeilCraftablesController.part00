@@ -1,0 +1,146 @@
+package dev.futurae.veilbound.platform.neoforge.inventory;
+
+import dev.futurae.veilbound.inventory.VeilInventory;
+import dev.futurae.veilbound.inventory.VeilStackKey;
+import dev.futurae.veilbound.matter.MatterPatternPageService;
+import dev.futurae.veilbound.network.VeilCraftablesRequestPayload;
+import dev.futurae.veilbound.network.VeilCraftablesSnapshotPayload;
+import dev.futurae.veilbound.runtime.VeilboundRuntime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.context.ContextMap;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.display.RecipeDisplay;
+import net.minecraft.world.item.crafting.display.ShapedCraftingRecipeDisplay;
+import net.minecraft.world.item.crafting.display.ShapelessCraftingRecipeDisplay;
+import net.minecraft.world.item.crafting.display.SlotDisplay;
+import net.minecraft.world.item.crafting.display.SlotDisplayContext;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.transfer.item.ItemResource;
+
+/** Builds the Magic-Storage-style Craftables catalog entirely on the server. */
+public final class NeoForgeVeilCraftablesController {
+    private final VeilboundRuntime runtime;
+
+    public NeoForgeVeilCraftablesController(VeilboundRuntime runtime) {
+        this.runtime = Objects.requireNonNull(runtime, "runtime");
+    }
+
+    public void handle(ServerPlayer player, VeilCraftablesRequestPayload request) {
+        var access = runtime.veilInventoryAccess().ownerAccess(player.getUUID(), player.getUUID());
+        if (!access.allowed()) {
+            PacketDistributor.sendToPlayer(player,
+                    VeilCraftablesSnapshotPayload.denied(access.reason(), request.allCrafts()));
+            return;
+        }
+        var record = runtime.domains().getRecord(player.getUUID()).orElse(null);
+        if (record == null) {
+            PacketDistributor.sendToPlayer(player,
+                    VeilCraftablesSnapshotPayload.denied("domain_not_found", request.allCrafts()));
+            return;
+        }
+        long matter = record.matterTransmutation().storedMatter();
+        Set<String> learned = record.matterTransmutation().learnedItemIds();
+        ContextMap displayContext = SlotDisplayContext.fromLevel(player.level());
+        List<CatalogEntry> all = new ArrayList<>();
+        Set<String> dedupe = new HashSet<>();
+
+        for (RecipeHolder<?> holder : player.level().recipeAccess().getRecipes()) {
+            for (RecipeDisplay display : holder.value().display()) {
+                CatalogEntry entry = switch (display) {
+                    case ShapedCraftingRecipeDisplay shaped -> fromShaped(shaped, displayContext, learned, matter, access.inventory(), player);
+                    case ShapelessCraftingRecipeDisplay shapeless -> fromShapeless(shapeless, displayContext, learned, matter, access.inventory(), player);
+                    default -> null;
+                };
+                if (entry == null || (!request.allCrafts() && !entry.craftable())) continue;
+                if (!matches(entry, request.query())) continue;
+                String signature = signature(entry);
+                if (dedupe.add(signature)) all.add(entry);
+            }
+        }
+
+        all.sort(comparator(request.sortMode()));
+        int matching = all.size();
+        int pageCount = Math.max(1, (all.size() + VeilCraftablesSnapshotPayload.PAGE_SIZE - 1)
+                / VeilCraftablesSnapshotPayload.PAGE_SIZE);
+        int page = Math.max(0, Math.min(request.page(), pageCount - 1));
+        int from = Math.min(all.size(), page * VeilCraftablesSnapshotPayload.PAGE_SIZE);
+        int to = Math.min(all.size(), from + VeilCraftablesSnapshotPayload.PAGE_SIZE);
+
+        List<VeilCraftablesSnapshotPayload.Entry> entries = all.subList(from, to).stream()
+                .map(entry -> new VeilCraftablesSnapshotPayload.Entry(
+                        entry.result(), entry.resultCount(), entry.matterCost(), entry.craftable(),
+                        entry.patternsKnown(), entry.affordableCrafts(), entry.grid(), entry.learnedGrid()))
+                .toList();
+        PacketDistributor.sendToPlayer(player, new VeilCraftablesSnapshotPayload(
+                true, "ok", request.allCrafts(), page, pageCount, matter, matching, entries));
+    }
+
+    private CatalogEntry fromShaped(
+            ShapedCraftingRecipeDisplay display,
+            ContextMap context,
+            Set<String> learned,
+            long storedMatter,
+            VeilInventory inventory,
+            ServerPlayer player) {
+        if (display.width() < 1 || display.height() < 1 || display.width() > 3 || display.height() > 3) return null;
+        if (display.ingredients().size() != display.width() * display.height()) return null;
+        List<ItemResource> grid = emptyGrid();
+        List<Boolean> availableGrid = emptyLearnedGrid();
+        Map<VeilStackKey, Integer> storedNeeds = new LinkedHashMap<>();
+        Map<VeilStackKey, Long> availableCounts = new LinkedHashMap<>();
+        long cost = 0L;
+        boolean allAvailable = true;
+        for (int y = 0; y < display.height(); y++) {
+            for (int x = 0; x < display.width(); x++) {
+                SlotDisplay slot = display.ingredients().get(y * display.width() + x);
+                if (slot instanceof SlotDisplay.Empty) continue;
+                Candidate candidate = choose(slot, context, learned, storedMatter, inventory, player);
+                if (candidate == null) return null;
+                int target = y * 3 + x;
+                grid.set(target, candidate.resource());
+                boolean available = candidate.available();
+                int needed = storedNeeds.merge(candidate.key(), 1, Integer::sum);
+                availableCounts.put(candidate.key(), candidate.availabilityHint());
+                available = candidate.availabilityHint() >= needed;
+                if (candidate.matterBased()) cost = saturatedAdd(cost, candidate.matterCost());
+                availableGrid.set(target, available);
+                allAvailable &= available;
+            }
+        }
+        return finish(display.result(), context, grid, availableGrid, cost, allAvailable, storedMatter, storedNeeds, availableCounts);
+    }
+
+    private CatalogEntry fromShapeless(
+            ShapelessCraftingRecipeDisplay display,
+            ContextMap context,
+            Set<String> learned,
+            long storedMatter,
+            VeilInventory inventory,
+            ServerPlayer player) {
+        if (display.ingredients().isEmpty() || display.ingredients().size() > 9) return null;
+        List<ItemResource> grid = emptyGrid();
+        List<Boolean> availableGrid = emptyLearnedGrid();
+        Map<VeilStackKey, Integer> storedNeeds = new LinkedHashMap<>();
+        Map<VeilStackKey, Long> availableCounts = new LinkedHashMap<>();
+        long cost = 0L;
+        boolean allAvailable = true;
+        int slotIndex = 0;
+        for (SlotDisplay slot : display.ingredients()) {
+            if (slot instanceof SlotDisplay.Empty) continue;
+            if (slotIndex >= 9) return null;
+            Candidate candidate = choose(slot, context, learned, storedMatter, inventory, player);
+            if (candidate == null) return null;
+            grid.set(slotIndex, candidate.resource());
+            boolean available = candidate.available();
+            int needed = storedNeeds.merge(candidate.key(), 1, Integer::sum);
