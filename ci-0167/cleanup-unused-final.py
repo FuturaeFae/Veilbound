@@ -141,8 +141,15 @@ for forbidden in (
     if forbidden in all_java:
         raise SystemExit(f'final cleanup incomplete: {forbidden}')
 
-# Apply the current transducer-machine UX after legacy reachability pruning. This replaces the old
-# status-chat interaction with a real machine menu and installs the tier-specific raised/animated models.
+# Stage the exact current source implementation after legacy reachability pruning so old transducer
+# source from the historical baseline cannot override the new menu/block-entity/controller behavior.
+stage_transducer = ci / 'stage-transducer-sources.py'
+if not stage_transducer.is_file():
+    raise SystemExit('missing transducer source staging pass')
+subprocess.run([sys.executable, str(stage_transducer), str(root)], check=True)
+
+# Apply the current transducer-machine UX. This replaces the old status-chat interaction with a real
+# machine menu and installs the tier-specific raised/animated models and deterministic textures.
 transducer_pass = ci / 'apply-transducer-pass.py'
 if not transducer_pass.is_file():
     raise SystemExit('missing transducer GUI pass')
