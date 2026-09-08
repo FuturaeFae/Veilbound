@@ -15,6 +15,15 @@ replace_file('src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScr
 replace_file('src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java', 'NeoForgeVeilInventoryController', 2)
 replace_file('src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftingController.java', 'NeoForgeVeilCraftingController', 2)
 replace_file('src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftablesController.java', 'NeoForgeVeilCraftablesController', 3)
+replace_file('src/test/java/dev/futurae/veilbound/inventory/VeilInventorySelfTest.java', 'VeilInventorySelfTest', 1)
+
+# Update legacy self-tests to the first-release unlimited Domain terminal policy.
+for rel in [
+    'src/test/java/dev/futurae/veilbound/inventory/VeilCraftingSelfTest.java',
+    'src/test/java/dev/futurae/veilbound/inventory/VeilTransmutationSelfTest.java',
+]:
+    tp = root / rel
+    tp.write_text(tp.read_text(encoding='utf-8').replace('VeilStoragePolicy.RESONANT', 'VeilStorageCapacity.EFFECTIVELY_UNLIMITED'), encoding='utf-8')
 
 # First-release storage is Domain-owned immediately and has no upgrade/capacity gate.
 (root / 'src/main/java/dev/futurae/veilbound/inventory/VeilStoragePolicy.java').write_text('''package dev.futurae.veilbound.inventory;\n\nimport dev.futurae.veilbound.domain.DomainState;\nimport java.util.Objects;\n\n/** First-release storage policy: every bound Domain owns an effectively-unlimited Veil terminal. */\npublic final class VeilStoragePolicy {\n    public VeilStorageCapacity capacityFor(DomainState state) {\n        Objects.requireNonNull(state, "state");\n        return VeilStorageCapacity.EFFECTIVELY_UNLIMITED;\n    }\n}\n''', encoding='utf-8')
@@ -91,6 +100,9 @@ expected = {
     'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java': '11d82430c13c0a15b21f08c6f39c1e4b2209904da72040c0cf6bd43177352ab3',
     'src/main/java/dev/futurae/veilbound/platform/neoforge/network/NeoForgeNetworking.java': '758df1e7fce08ff8953a658218f395fca047153df04e5208f6585fda4efa2399',
     'src/main/resources/assets/veilbound/lang/en_us.json': 'e311008de39102433503738dc1b00a50f6dc2fc84101f1707799e7cdc2f38454',
+    'src/test/java/dev/futurae/veilbound/inventory/VeilInventorySelfTest.java': '8b7ee0d7c391f7ac004c1cc8ad26e2616f189d96e80a77d52aee0f9e147a21ea',
+    'src/test/java/dev/futurae/veilbound/inventory/VeilCraftingSelfTest.java': 'c8cc7473ccfda62bf8474b3975eed8d48da5adb32a4a7ac7f779fca83322e17c',
+    'src/test/java/dev/futurae/veilbound/inventory/VeilTransmutationSelfTest.java': '48bb83b24447748f24b7d7e6c3a1b2779aa807eeb28e30400111100a5979a6aa',
 }
 for rel, want in expected.items():
     got = hashlib.sha256((root / rel).read_bytes()).hexdigest()
