@@ -155,6 +155,14 @@ if not transducer_pass.is_file():
     raise SystemExit('missing transducer GUI pass')
 subprocess.run([sys.executable, str(transducer_pass), str(root)], check=True)
 
+# The original compact staging archive carried a damaged copy of the block-entity source. Always
+# restore the byte-stable, SHA-verified current implementation after the archive/asset pass so Java
+# compilation sees the exact reviewed source while retaining all newly generated textures/models.
+transducer_be_fix = ci / 'fix-transducer-be.py'
+if not transducer_be_fix.is_file():
+    raise SystemExit('missing clean transducer block-entity fixer')
+subprocess.run([sys.executable, str(transducer_be_fix), str(root)], check=True)
+
 print(
     'VEILBOUND_0167_FINAL_CLEANUP=PASS '
     f'additional_main_removed={len(dead_files)} additional_tests_removed={removed_tests} '
