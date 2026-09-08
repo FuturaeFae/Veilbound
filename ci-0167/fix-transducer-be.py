@@ -100,16 +100,35 @@ for marker in (
 if 'Button previous = Button.builder' in terminal_text or 'Button next = Button.builder' in terminal_text:
     raise SystemExit('old floating terminal page buttons remained')
 
-# Domain lifecycle visual pass. Travel uses a brief black/purple full-screen vortex with opposite
-# enter/exit spin. First Genesis Seed binding uses a longer singularity-style collapse/release and
-# replaces the old success chat line entirely.
+# Base Domain lifecycle visual pass removes binding success text and installs networking/render hooks.
 domain_transition_pass = ci / 'domain-transition-pass.py'
 if not domain_transition_pass.is_file():
     raise SystemExit('missing Domain transition visual pass')
 subprocess.run([sys.executable, str(domain_transition_pass), str(root)], check=True)
 
-# The binding animation is now the only success feedback; remove the historical success translation
-# too rather than leaving a dead message key in the cleaned first-release resources.
+# Run a compressed late-stage script payload without trusting the historical source archive to carry
+# current client/server transition timing or current resource textures.
+def run_gz_b64_script(name):
+    payload_path = ci / name
+    if not payload_path.is_file():
+        raise SystemExit(f'missing late-stage payload: {name}')
+    script = gzip.decompress(base64.b64decode(payload_path.read_text(encoding='ascii')))
+    temp = ci / ('.' + name.removesuffix('.gz.b64') + '.tmp')
+    temp.write_bytes(script)
+    try:
+        subprocess.run([sys.executable, str(temp), str(root)], check=True)
+    finally:
+        temp.unlink(missing_ok=True)
+
+# V2 travel starts the closing animation first, waits 12 server ticks, teleports under full black,
+# then sends the opening phase. It also removes the old radial/iris presentation entirely.
+run_gz_b64_script('domain-transition-v2.py.gz.b64')
+
+# Re-install the approved resource identities at the very end so later UI/transition staging cannot
+# regress them to old placeholder art. This is the authoritative ore/item texture pass.
+run_gz_b64_script('resource-texture-v2.py.gz.b64')
+
+# The binding animation is now the only success feedback; remove the historical success translation.
 lang = root / 'src/main/resources/assets/veilbound/lang/en_us.json'
 translations = json.loads(lang.read_text(encoding='utf-8'))
 translations.pop('message.veilbound.genesis_seed.bound', None)
@@ -119,4 +138,5 @@ print(
     f'VEILBOUND_0167_TRANSDUCER_BE_FIX=PASS sha256={sha} bytes={len(raw)} '
     'models=raised_core textures=casing_panel_animated_core legacy_flat=absent')
 print('VEILBOUND_0167_TERMINAL_REFERENCE_UI=PASS slots=beveled grid=recessed scrollbar=integrated track_click=page_jump header=compact')
-print('VEILBOUND_0167_DOMAIN_TRANSITIONS=PASS enter_exit=black_purple_vortex binding=singularity binding_text=none')
+print('VEILBOUND_0167_DOMAIN_TRANSITIONS=PASS travel=swirl_in_before_teleport_swirl_out radial=removed binding=singularity binding_text=none')
+print('VEILBOUND_0167_RESOURCE_TEXTURES=PASS ores=updated items=updated identities=dimensional_prismatic_resonant_crystal_phase_metal_causal_liquid')
