@@ -1,1 +1,161 @@
-PLACEHOLDER
+package dev.futurae.veilbound.client.screen;
+
+import dev.futurae.veilbound.matter.MatterPatternPageService;
+import dev.futurae.veilbound.network.VeilCraftablesRequestPayload;
+import dev.futurae.veilbound.network.VeilCraftablesSnapshotPayload;
+import dev.futurae.veilbound.network.VeilCraftingPreviewPayload;
+import dev.futurae.veilbound.network.VeilCraftingRequestPayload;
+import dev.futurae.veilbound.network.VeilInventoryActionPayload;
+import dev.futurae.veilbound.network.VeilInventorySnapshotPayload;
+import java.text.NumberFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
+import net.neoforged.neoforge.transfer.item.ItemResource;
+
+/**
+ * AE-terminal-inspired first-release Veil Inventory.
+ *
+ * <p>The screen deliberately keeps a vanilla-gray container language rather than a decorative
+ * sci-fi HUD. Inventory mode shows learned Matter identities and exact unvalued stacks together.
+ * Crafting mode swaps the terminal grid to recipe results while keeping the player's inventory
+ * visible and presents a 3x3 recipe/manual grid beside the terminal.</p>
+ */
+public final class VeilInventoryScreen extends Screen {
+    private static final int GRID_COLUMNS = 9;
+    private static final int GRID_ROWS = 9;
+    private static final int GRID_CAPACITY = GRID_COLUMNS * GRID_ROWS;
+    private static final int SLOT = 18;
+    private static final int PANEL_WIDTH = 214;
+    private static final int PANEL_HEIGHT = 322;
+    private static final int SEARCH_DEBOUNCE_TICKS = 6;
+    private static final NumberFormat NUMBERS = NumberFormat.getIntegerInstance(Locale.US);
+
+    private enum Mode { INVENTORY, CRAFTING }
+
+    private VeilInventorySnapshotPayload snapshot;
+    private VeilCraftablesSnapshotPayload craftables =
+            VeilCraftablesSnapshotPayload.denied("not_requested", true);
+    private VeilCraftingPreviewPayload craftingPreview = VeilCraftingPreviewPayload.denied("empty_grid");
+    private final ArrayList<ItemResource> craftingGrid = new ArrayList<>(VeilCraftingRequestPayload.GRID_SIZE);
+
+    private Mode mode = Mode.INVENTORY;
+    private String inventoryQuery = "";
+    private String craftingQuery = "";
+    private MatterPatternPageService.SortMode inventorySort = MatterPatternPageService.SortMode.NAME_ASC;
+    private MatterPatternPageService.SortMode craftingSort = MatterPatternPageService.SortMode.NAME_ASC;
+    private EditBox searchBox;
+    private int searchDebounce;
+
+    private int selectedRecipe = -1;
+    private ItemResource selectedRecipeResult = ItemResource.EMPTY;
+    private int activeManualCell = 0;
+
+    public VeilInventoryScreen(VeilInventorySnapshotPayload snapshot) {
+        super(Component.translatable("screen.veilbound.veil_inventory"));
+        this.snapshot = snapshot;
+        for (int i = 0; i < VeilCraftingRequestPayload.GRID_SIZE; i++) craftingGrid.add(ItemResource.EMPTY);
+    }
+
+    public void acceptSnapshot(VeilInventorySnapshotPayload next) {
+        this.snapshot = next;
+        if (mode == Mode.CRAFTING && next.allowed()) requestCraftables(craftables.page());
+        if (minecraft != null) rebuildWidgets();
+    }
+
+    public void acceptCraftablesSnapshot(VeilCraftablesSnapshotPayload next) {
+        this.craftables = next;
+        if (!selectedRecipeResult.isEmpty()) {
+            int retained = -1;
+            for (int i = 0; i < next.entries().size(); i++) {
+                var entry = next.entries().get(i);
+                if (entry.result().equals(selectedRecipeResult) && entry.grid().equals(craftingGrid)) {
+                    retained = i;
+                    break;
+                }
+            }
+            selectedRecipe = retained;
+            if (retained < 0) clearSelectedRecipe(false);
+        }
+        if (minecraft != null) rebuildWidgets();
+    }
+
+    public void acceptCraftingPreview(VeilCraftingPreviewPayload preview) {
+        this.craftingPreview = preview;
+        if (minecraft != null) rebuildWidgets();
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        int left = panelLeft();
+        int top = panelTop();
+
+        addRenderableWidget(Button.builder(sortShort(activeSort()), button -> cycleSort())
+                .bounds(left + 8, top + 30, 44, 18).build());
+
+        addRenderableWidget(Button.builder(
+                        Component.literal(mode == Mode.INVENTORY ? "Craft" : "Inv"),
+                        button -> toggleMode())
+                .bounds(left + 56, top + 30, 44, 18).build());
+
+        searchBox = new EditBox(font, 84, 18, Component.translatable("screen.veilbound.veil_inventory.search"));
+        searchBox.setMaxLength(VeilInventoryActionPayload.MAX_QUERY_LENGTH);
+        searchBox.setValue(activeQuery());
+        searchBox.setHint(Component.translatable("screen.veilbound.veil_inventory.search_hint"));
+        searchBox.setResponder(value -> {
+            if (mode == Mode.INVENTORY) inventoryQuery = value == null ? "" : value;
+            else craftingQuery = value == null ? "" : value;
+            searchDebounce = SEARCH_DEBOUNCE_TICKS;
+        });
+        searchBox.setPosition(left + 104, top + 30);
+        addRenderableWidget(searchBox);
+
+        addRenderableWidget(Button.builder(Component.literal("×"), button -> clearSearch())
+                .bounds(left + 190, top + 30, 16, 18).build());
+
+        if (!snapshot.allowed()) return;
+
+        // Main terminal/result grid.
+        if (mode == Mode.INVENTORY) {
+            for (int i = 0; i < Math.min(GRID_CAPACITY, snapshot.entries().size()); i++) {
+                ItemResource resource = snapshot.entries().get(i).resource();
+                int x = gridLeft() + (i % GRID_COLUMNS) * SLOT;
+                int y = gridTop() + (i / GRID_COLUMNS) * SLOT;
+                addRenderableWidget(Button.builder(Component.literal(""), button -> withdraw(resource))
+                        .bounds(x, y, SLOT, SLOT).build());
+            }
+        } else {
+            for (int i = 0; i < Math.min(GRID_CAPACITY, craftables.entries().size()); i++) {
+                final int recipeIndex = i;
+                int x = gridLeft() + (i % GRID_COLUMNS) * SLOT;
+                int y = gridTop() + (i / GRID_COLUMNS) * SLOT;
+                addRenderableWidget(Button.builder(Component.literal(""), button -> selectRecipe(recipeIndex))
+                        .bounds(x, y, SLOT, SLOT).build());
+            }
+        }
+
+        Button previous = Button.builder(Component.literal("▲"), button -> changePage(-1))
+                .bounds(scrollLeft(), gridTop(), 14, 14).build();
+        previous.active = activePage() > 0;
+        addRenderableWidget(previous);
+        Button next = Button.builder(Component.literal("▼"), button -> changePage(1))
+                .bounds(scrollLeft(), gridTop() + GRID_ROWS * SLOT - 14, 14, 14).build();
+        next.active = activePage() + 1 < activePageCount();
+        addRenderableWidget(next);
+
+        // Player inventory/hotbar. Clicking a stack deposits in Inventory mode; in manual Crafting
+        // mode it becomes the selected ghost ingredient.
+        if (minecraft != null && minecraft.player != null) {
+            for (int row = 0; row < 3; row++) {
+                for (int col = 0; col < 9; col++) {
+                    final int invSlot = 9 + row * 9 + col;
+                    int x = gridLeft() + col * SLOT;
+                    int y = playerGridTop() + row * SLOT;
