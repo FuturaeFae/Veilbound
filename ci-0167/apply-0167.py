@@ -124,17 +124,30 @@ if signature + guard not in text:
     text = text.replace(signature, signature + guard, 1)
 entity.write_text(text, encoding='utf-8')
 
-# Terminal/Core GUI polish is intentionally kept as a reviewable patch against the exact 0.1.66
-# source baseline. It also carries the verifier-safe VEIL_LANCE null guard used by the tested hotfix.
+# Terminal/Core GUI polish is intentionally kept as reviewable patches against the exact 0.1.66
+# source baseline. The first patch also carries the verifier-safe VEIL_LANCE null guard used by the tested hotfix.
 patch_file = ci / 'gui-polish.patch'
 if not patch_file.is_file():
     raise SystemExit('missing 0.1.67 GUI polish patch')
 subprocess.run(['patch', '-p1', '--batch', '-i', str(patch_file)], cwd=root, check=True)
 
+# Match the current ME-terminal interaction model more closely: left click withdraws a full stack,
+# right click withdraws half a stack, while the server remains authoritative over the requested amount.
+ae2_patch = ci / 'ae2-withdrawal-polish.patch'
+if not ae2_patch.is_file():
+    raise SystemExit('missing 0.1.67 AE-style withdrawal patch')
+subprocess.run(['patch', '-p1', '--batch', '-i', str(ae2_patch)], cwd=root, check=True)
+
 terminal = root / 'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java'
 terminal_text = terminal.read_text(encoding='utf-8')
 if 'ContainerInput.PICKUP' not in terminal_text or 'setTooltipForNextFrame(font, stack' not in terminal_text:
     raise SystemExit('Veil Inventory GUI polish did not apply')
+if '(maxStack + 1) / 2' not in terminal_text:
+    raise SystemExit('ME-style half-stack withdrawal polish did not apply')
+server_terminal = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java'
+server_terminal_text = server_terminal.read_text(encoding='utf-8')
+if 'Math.min(payload.resource().getMaxStackSize(), Math.max(1, payload.quantity()))' not in server_terminal_text:
+    raise SystemExit('server withdrawal quantity guard did not apply')
 core_screen = root / 'src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java'
 core_text = core_screen.read_text(encoding='utf-8')
 if 'completely covered the tabs, expansion toggle, and six direction buttons' not in core_text:
@@ -143,4 +156,4 @@ collision = root / 'src/main/java/dev/futurae/veilbound/block/EngineeringMonumen
 if 'VeilboundBlocks.VEIL_LANCE != null' not in collision.read_text(encoding='utf-8'):
     raise SystemExit('VEIL_LANCE collision null guard did not apply')
 
-print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS gui_polish=PASS core_buttons=PASS')
+print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS gui_polish=PASS core_buttons=PASS ae_withdrawal=PASS')
