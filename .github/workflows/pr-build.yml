@@ -10,5 +10,5 @@ permissions:
 
 jobs:
   validate:
-    uses: ./.github/workflows/validate-0.1.64.yml
+    uses: ./.github/workflows/validate-0.1.65.yml
     secrets: inherit
