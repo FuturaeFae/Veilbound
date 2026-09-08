@@ -60,6 +60,11 @@ owner_text = owner_travel_test.read_text(encoding='utf-8')
 owner_text = owner_text.replace('initial pocket stays 1x1x2', 'initial Domain stays centered 3x3x3')
 owner_travel_test.write_text(owner_text, encoding='utf-8')
 
+# Keep the Core-control regression aligned with the actual first-release balance contract:
+# TransductionPolicy is (FE per Matter, Matter per DE), so 96 FE + 32 Matter must credit 1 DE.
+core_control_test = root / 'src/test/java/dev/futurae/veilbound/domain/CoreControlSelfTest.java'
+shutil.copyfile(ci / 'CoreControlSelfTest.java', core_control_test)
+
 # Pre-test hardening: the actively registered /domain admin surface must exercise only the slim
 # first-release state model. In particular, admin-created Domains must initialize exactly like a
 # Genesis Seed instead of creating the old core-inactive prototype state.
@@ -112,4 +117,4 @@ firstReleaseSelfTests.each { taskName, testMain ->
 '''
     build_file.write_text(build_text, encoding='utf-8')
 
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 admin_surface=slim dynamo_title=translated')
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter admin_surface=slim dynamo_title=translated')
