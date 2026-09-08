@@ -101,8 +101,8 @@ core_screen = root / 'src/main/java/dev/futurae/veilbound/client/screen/DomainCo
 if 'completely covered the tabs, expansion toggle, and six direction buttons' not in core_screen.read_text(encoding='utf-8'):
     raise SystemExit('Core control widget-layer fix did not apply')
 
-# Final cleanup: remove null registry aliases, disconnected feature implementations, orphaned render
-# resources and tests, and replace the old monument/lance collision supplement with a Core-only one.
+# Remove null registry aliases, disconnected feature implementations, orphaned render resources and
+# tests, and replace the old monument/lance collision supplement with a Core-only implementation.
 cleanup = ci / 'cleanup-unused.py'
 if not cleanup.is_file():
     raise SystemExit('missing deterministic unused-source cleanup')
@@ -115,13 +115,21 @@ text = re.sub(
     '\n', text, flags=re.S)
 build.write_text(text, encoding='utf-8')
 
-# Final source-tree audit. At this point the old compatibility names must not exist anywhere in
-# runtime source; executed persistence/migration readers remain because they are active safety code.
+# Strict second pass catches package-private helpers, removes the last unregistered Boundary Pylon
+# branches, prunes dead translations, and verifies that all surviving resource/build hooks resolve.
+final_cleanup = ci / 'cleanup-unused-final.py'
+if not final_cleanup.is_file():
+    raise SystemExit('missing strict final unused-source cleanup')
+subprocess.run([sys.executable, str(final_cleanup), str(root)], check=True)
+
+# Final source-tree audit. At this point old compatibility implementations must not exist anywhere in
+# runtime source. Executed persistence/migration readers remain because they are live world-safety code.
 java_root = root / 'src/main/java'
 all_java = '\n'.join(path.read_text(encoding='utf-8', errors='ignore') for path in java_root.rglob('*.java'))
 for forbidden in (
     'EngineeringMonumentBlock', 'EngineeringMonumentCollisionState', 'EngineeringMonumentRenderer',
     'VeilLanceBlock', 'VeilboundDataComponents', 'NeoForgeVeilInterfaceCapabilities',
+    'BoundaryPylonBindingService', 'BreachLinkData', 'BOUNDARY_PYLON.get()',
     '@Deprecated public static final', 'VOID_ANCHOR_FLOOR'):
     if forbidden in all_java:
         raise SystemExit(f'0.1.67 cleanup audit failed: {forbidden}')
