@@ -100,7 +100,16 @@ for marker in (
 if 'Button previous = Button.builder' in terminal_text or 'Button next = Button.builder' in terminal_text:
     raise SystemExit('old floating terminal page buttons remained')
 
+# Domain lifecycle visual pass. Travel uses a brief black/purple full-screen vortex with opposite
+# enter/exit spin. First Genesis Seed binding uses a longer singularity-style collapse/release and
+# replaces the old success chat line entirely.
+domain_transition_pass = ci / 'domain-transition-pass.py'
+if not domain_transition_pass.is_file():
+    raise SystemExit('missing Domain transition visual pass')
+subprocess.run([sys.executable, str(domain_transition_pass), str(root)], check=True)
+
 print(
     f'VEILBOUND_0167_TRANSDUCER_BE_FIX=PASS sha256={sha} bytes={len(raw)} '
     'models=raised_core textures=casing_panel_animated_core legacy_flat=absent')
 print('VEILBOUND_0167_TERMINAL_REFERENCE_UI=PASS slots=beveled grid=recessed scrollbar=integrated track_click=page_jump header=compact')
+print('VEILBOUND_0167_DOMAIN_TRANSITIONS=PASS enter_exit=black_purple_vortex binding=singularity binding_text=none')
