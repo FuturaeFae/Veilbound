@@ -1,5 +1,5 @@
 from pathlib import Path
-import base64, io, json, sys, tarfile
+import base64, io, json, shutil, sys, tarfile
 
 root = Path(sys.argv[1]).resolve()
 ci = Path(__file__).resolve().parent
@@ -10,6 +10,15 @@ if not payload.is_file():
 archive_bytes = base64.b64decode(payload.read_text(encoding='ascii'))
 with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode='r:gz') as archive:
     archive.extractall(root)
+
+# The menu source was added after the first compact binary asset bundle was cut. Stage it directly so
+# reconstruction never depends on an obsolete copy of the payload archive.
+menu_payload = ci / 'DimensionalTransducerMenu.java'
+menu_target = root / 'src/main/java/dev/futurae/veilbound/menu/DimensionalTransducerMenu.java'
+if not menu_payload.is_file():
+    raise SystemExit('missing direct transducer menu source payload')
+menu_target.parent.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(menu_payload, menu_target)
 
 # Remove the old flat cube-all textures. The replacement models use a dynamo-inspired lower casing,
 # inset side panel, and a raised animated tier core instead.
