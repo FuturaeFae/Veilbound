@@ -2,6 +2,7 @@ from pathlib import Path
 import base64
 import gzip
 import hashlib
+import json
 import sys
 
 root = Path(sys.argv[1]).resolve()
@@ -24,4 +25,60 @@ if b'MATTER_INPUT_SLOT' not in raw or b'DimensionalTransducerMenu' not in raw:
 
 target.parent.mkdir(parents=True, exist_ok=True)
 target.write_bytes(raw)
-print(f'VEILBOUND_0167_TRANSDUCER_BE_FIX=PASS sha256={sha} bytes={len(raw)}')
+
+# The historical compact archive still contains the old cube_all transducer models. Replace them
+# after extraction so the packaged JAR actually USES the new casing/panel/animated-core textures.
+model_dir = root / 'src/main/resources/assets/veilbound/models/block'
+texture_dir = root / 'src/main/resources/assets/veilbound/textures/block'
+for kind in ('dimensional', 'resonant', 'phase', 'causal'):
+    model = {
+        'parent': 'minecraft:block/block',
+        'ambientocclusion': True,
+        'textures': {
+            'particle': f'veilbound:block/{kind}_transducer_casing',
+            'casing': f'veilbound:block/{kind}_transducer_casing',
+            'panel': f'veilbound:block/{kind}_transducer_panel',
+            'core': f'veilbound:block/{kind}_transducer_core',
+        },
+        'elements': [
+            {
+                'from': [0, 0, 0],
+                'to': [16, 12, 16],
+                'faces': {
+                    'down': {'texture': '#casing', 'cullface': 'down'},
+                    'up': {'texture': '#casing'},
+                    'north': {'texture': '#panel', 'cullface': 'north'},
+                    'south': {'texture': '#panel', 'cullface': 'south'},
+                    'west': {'texture': '#panel', 'cullface': 'west'},
+                    'east': {'texture': '#panel', 'cullface': 'east'},
+                },
+            },
+            {
+                'from': [5, 12, 5],
+                'to': [11, 16, 11],
+                'faces': {
+                    'down': {'texture': '#core'},
+                    'up': {'texture': '#core'},
+                    'north': {'texture': '#core'},
+                    'south': {'texture': '#core'},
+                    'west': {'texture': '#core'},
+                    'east': {'texture': '#core'},
+                },
+            },
+        ],
+    }
+    model_path = model_dir / f'{kind}_transducer.json'
+    model_path.write_text(json.dumps(model, indent=2) + '\n', encoding='utf-8')
+
+    for suffix in ('casing.png', 'panel.png', 'core.png', 'core.png.mcmeta'):
+        texture = texture_dir / f'{kind}_transducer_{suffix}'
+        if not texture.is_file() or texture.stat().st_size == 0:
+            raise SystemExit(f'missing active transducer texture: {texture.relative_to(root)}')
+
+    legacy = texture_dir / f'{kind}_transducer.png'
+    if legacy.exists():
+        raise SystemExit(f'legacy flat transducer texture unexpectedly remained: {legacy.relative_to(root)}')
+
+print(
+    f'VEILBOUND_0167_TRANSDUCER_BE_FIX=PASS sha256={sha} bytes={len(raw)} '
+    'models=raised_core textures=casing_panel_animated_core legacy_flat=absent')
