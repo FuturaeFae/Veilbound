@@ -1,9 +1,11 @@
 from pathlib import Path
 import json
 import re
+import subprocess
 import sys
 
 root = Path(sys.argv[1]).resolve()
+ci = Path(__file__).resolve().parent
 java = root / 'src/main/java'
 test = root / 'src/test/java'
 res = root / 'src/main/resources'
@@ -139,8 +141,16 @@ for forbidden in (
     if forbidden in all_java:
         raise SystemExit(f'final cleanup incomplete: {forbidden}')
 
+# Apply the current transducer-machine UX after legacy reachability pruning. This replaces the old
+# status-chat interaction with a real machine menu and installs the tier-specific raised/animated models.
+transducer_pass = ci / 'apply-transducer-pass.py'
+if not transducer_pass.is_file():
+    raise SystemExit('missing transducer GUI pass')
+subprocess.run([sys.executable, str(transducer_pass), str(root)], check=True)
+
 print(
     'VEILBOUND_0167_FINAL_CLEANUP=PASS '
     f'additional_main_removed={len(dead_files)} additional_tests_removed={removed_tests} '
     f'main_java={len(list(java.rglob("*.java")))} '
-    f'lang_keys={len(pruned)} lang_removed={len(translations) - len(pruned)}')
+    f'lang_keys={len(json.loads(lang.read_text(encoding="utf-8")))} '
+    f'lang_removed={len(translations) - len(pruned)}')
