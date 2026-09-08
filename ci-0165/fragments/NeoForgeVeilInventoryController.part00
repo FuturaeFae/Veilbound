@@ -1,0 +1,152 @@
+package dev.futurae.veilbound.platform.neoforge.inventory;
+
+import dev.futurae.veilbound.inventory.VeilInventoryTerminalPageService;
+import dev.futurae.veilbound.inventory.VeilStackKey;
+import dev.futurae.veilbound.matter.MatterPatternPageService;
+import dev.futurae.veilbound.matter.MatterTransmutationService;
+import dev.futurae.veilbound.network.VeilInventoryActionPayload;
+import dev.futurae.veilbound.network.VeilInventorySnapshotPayload;
+import dev.futurae.veilbound.runtime.VeilboundRuntime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.transfer.item.ItemResource;
+
+/** Server-authoritative mutation, paging, search and preference boundary for the Domain terminal. */
+public final class NeoForgeVeilInventoryController {
+    public static final int PAGE_SIZE = 81;
+    private static final int PLAYER_STORAGE_SLOTS = 36;
+
+    private final VeilboundRuntime runtime;
+    private final VeilInventoryTerminalPageService terminalPages = new VeilInventoryTerminalPageService();
+    private final MatterTransmutationService transmutation = new MatterTransmutationService();
+
+    public NeoForgeVeilInventoryController(VeilboundRuntime runtime) {
+        this.runtime = java.util.Objects.requireNonNull(runtime, "runtime");
+    }
+
+    public void handle(ServerPlayer player, VeilInventoryActionPayload payload) {
+        var access = runtime.veilInventoryAccess().ownerAccess(player.getUUID(), player.getUUID());
+        if (!access.allowed()) {
+            PacketDistributor.sendToPlayer(player, VeilInventorySnapshotPayload.denied(access.reason()));
+            return;
+        }
+        var record = runtime.domains().getRecord(player.getUUID()).orElse(null);
+        if (record == null) {
+            PacketDistributor.sendToPlayer(player, VeilInventorySnapshotPayload.denied("domain_not_found"));
+            return;
+        }
+
+        // First-release terminal semantics are always active once the Domain exists.
+        ensureTerminalMigration(record);
+        switch (payload.action()) {
+            case OPEN_OR_PAGE -> { }
+            case DEPOSIT_HELD -> depositOrTransmuteHeld(player, record, access.inventory(), access.capacity());
+            case DEPOSIT_RESOURCE_ONE -> depositMatchingPlayerInventory(
+                    player, record, access.inventory(), access.capacity(), payload.resource(), 1);
+            case DEPOSIT_RESOURCE_STACK -> {
+                int requested = payload.resource().isEmpty() ? 0 : payload.resource().getMaxStackSize();
+                depositMatchingPlayerInventory(
+                        player, record, access.inventory(), access.capacity(), payload.resource(), requested);
+            }
+            case WITHDRAW_ONE -> {
+                if (isMatterPattern(record, payload.resource(), player)) synthesize(player, record, payload.resource(), 1);
+                else withdrawStored(player, access.inventory(), access.capacity(), payload.resource(), 1);
+            }
+            case WITHDRAW_STACK -> {
+                int requested = payload.resource().isEmpty() ? 0 : payload.resource().getMaxStackSize();
+                if (isMatterPattern(record, payload.resource(), player)) synthesize(player, record, payload.resource(), requested);
+                else withdrawStored(player, access.inventory(), access.capacity(), payload.resource(), requested);
+            }
+            case SYNTHESIZE_QUANTITY -> synthesize(player, record, payload.resource(), payload.quantity());
+            case TOGGLE_FAVORITE -> toggleFavorite(player, record, payload.resource());
+            case TRANSMUTE_ONE, TRANSMUTE_STACK -> { }
+        }
+        sendSnapshot(player, payload.page(), payload.query(), payload.sortMode(), payload.filterMode());
+    }
+
+    private void ensureTerminalMigration(dev.futurae.veilbound.domain.DomainRecord record) {
+        if (record.veilInventory().totalItems() == 0) return;
+        var result = transmutation.migrateLegacyInventory(
+                record.state(), record.veilInventory(), record.matterTransmutation(), runtime.matter());
+        if (!result.migrated()) {
+            throw new IllegalStateException("Unable to reconcile Veil Inventory into Matter terminal: " + result.reason());
+        }
+    }
+
+    private void depositOrTransmuteHeld(
+            ServerPlayer player,
+            dev.futurae.veilbound.domain.DomainRecord record,
+            dev.futurae.veilbound.inventory.VeilInventory inventory,
+            dev.futurae.veilbound.inventory.VeilStorageCapacity capacity) {
+        ItemStack held = player.getMainHandItem();
+        if (held.isEmpty()) return;
+        depositStack(player, record, inventory, capacity, held, held.getCount());
+    }
+
+    private void depositMatchingPlayerInventory(
+            ServerPlayer player,
+            dev.futurae.veilbound.domain.DomainRecord record,
+            dev.futurae.veilbound.inventory.VeilInventory inventory,
+            dev.futurae.veilbound.inventory.VeilStorageCapacity capacity,
+            ItemResource requestedResource,
+            int requestedCount) {
+        if (requestedResource == null || requestedResource.isEmpty() || requestedCount <= 0) return;
+        VeilStackKey requestedKey;
+        try {
+            requestedKey = NeoForgeVeilStackBridge.toKey(requestedResource, player.registryAccess());
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        int remaining = requestedCount;
+        int limit = Math.min(PLAYER_STORAGE_SLOTS, player.getInventory().getContainerSize());
+        for (int slot = 0; slot < limit && remaining > 0; slot++) {
+            ItemStack stack = player.getInventory().getItem(slot);
+            if (stack.isEmpty()) continue;
+            VeilStackKey key;
+            try {
+                key = NeoForgeVeilStackBridge.toKey(ItemResource.of(stack), player.registryAccess());
+            } catch (RuntimeException malformed) {
+                continue;
+            }
+            if (!requestedKey.equals(key)) continue;
+            int before = stack.getCount();
+            int offered = Math.min(before, remaining);
+            depositStack(player, record, inventory, capacity, stack, offered);
+            int moved = before - stack.getCount();
+            if (moved <= 0) break;
+            remaining -= moved;
+        }
+    }
+
+    private void depositStack(
+            ServerPlayer player,
+            dev.futurae.veilbound.domain.DomainRecord record,
+            dev.futurae.veilbound.inventory.VeilInventory inventory,
+            dev.futurae.veilbound.inventory.VeilStorageCapacity capacity,
+            ItemStack stack,
+            int offeredCount) {
+        if (stack == null || stack.isEmpty() || offeredCount <= 0) return;
+        ItemResource resource = ItemResource.of(stack);
+        VeilStackKey key;
+        try {
+            key = NeoForgeVeilStackBridge.toKey(resource, player.registryAccess());
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        int offered = Math.min(stack.getCount(), offeredCount);
+        var value = runtime.matter().amount(key.itemId());
+        if (value.isPresent() && value.getAsLong() > 0) {
+            var absorbed = transmutation.absorb(
+                    record.state(), record.matterTransmutation(), runtime.matter(), key, offered);
+            if (absorbed.absorbed()) stack.shrink((int) absorbed.itemCount());
+            return;
+        }
+        long accepted = inventory.insert(key, offered, capacity);
+        if (accepted > 0) stack.shrink((int) accepted);
+    }
+
+    private boolean isMatterPattern(
