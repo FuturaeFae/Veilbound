@@ -34,4 +34,21 @@ with tarfile.open(tmp, 'r:xz') as tf:
             raise SystemExit(f'unsafe overlay path: {member.name}')
     tf.extractall(root)
 tmp.unlink()
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual}')
+
+# Compiler hardening for the slim cut: keep the new Core packet valid on MC 26.2 and physically
+# remove the obsolete Boundary Pylon coordinator instead of retaining a dead compatibility shim.
+snapshot = root / 'src/main/java/dev/futurae/veilbound/network/DomainControlsSnapshotPayload.java'
+text = snapshot.read_text(encoding='utf-8')
+method = '    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }\n\n'
+needle = '    public static DomainControlsSnapshotPayload denied(View view, String reason) {'
+if method.strip() not in text:
+    if needle not in text:
+        raise SystemExit('could not locate DomainControlsSnapshotPayload insertion point')
+    text = text.replace(needle, method + needle, 1)
+    snapshot.write_text(text, encoding='utf-8')
+
+pylon = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeBoundaryPylonCoordinator.java'
+if pylon.exists():
+    pylon.unlink()
+
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed')
