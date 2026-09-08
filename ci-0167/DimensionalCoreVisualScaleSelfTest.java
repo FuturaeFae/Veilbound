@@ -1,7 +1,6 @@
 package dev.futurae.veilbound.block;
 
 import dev.futurae.veilbound.domain.CoreTier;
-import net.minecraft.world.phys.AABB;
 
 /** Regression for the floating, level-scaled physical Core hitbox. */
 public final class DimensionalCoreVisualScaleSelfTest {
@@ -10,8 +9,8 @@ public final class DimensionalCoreVisualScaleSelfTest {
         for (CoreTier tier : CoreTier.values()) {
             var boxes = DimensionalCoreBlock.collisionBoxes(tier);
             truth(!boxes.isEmpty(), tier + " has a selectable main crystal");
-            double minY = boxes.stream().mapToDouble(AABB::minY).min().orElseThrow();
-            double maxY = boxes.stream().mapToDouble(AABB::maxY).max().orElseThrow();
+            double minY = boxes.stream().mapToDouble(box -> box.minY).min().orElseThrow();
+            double maxY = boxes.stream().mapToDouble(box -> box.maxY).max().orElseThrow();
             truth(minY > 0.0D, tier + " leaves real air below the floating crystal");
             truth(maxY > previousHeight, tier + " grows taller than the previous Core level");
             previousHeight = maxY;
