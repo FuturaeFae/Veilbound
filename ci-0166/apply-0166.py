@@ -80,4 +80,36 @@ dynamo_text = dynamo_text.replace(
     'Early first-release FE source for the Dimensional Transducer without requiring another tech mod.\n * The machine uses ordinary furnace fuels to drive a boundary-induction coil.')
 dynamo.write_text(dynamo_text, encoding='utf-8')
 
+# Turn the existing loader-neutral first-release regression mains into real `check` gates. These
+# cover binding/starter geometry, Core controls, all four Transducer throughputs, Matter intake,
+# the hybrid terminal, terminal paging/search, and atomic crafting before a human client test.
+build_file = root / 'build.gradle'
+build_text = build_file.read_text(encoding='utf-8')
+marker = "// VEILBOUND_0166_FIRST_RELEASE_SELF_TESTS"
+if marker not in build_text:
+    build_text += '''
+
+// VEILBOUND_0166_FIRST_RELEASE_SELF_TESTS
+def firstReleaseSelfTests = [
+    genesisSeedSelfTest: 'dev.futurae.veilbound.ritual.GenesisSeedSelfTest',
+    starterPocketLayoutSelfTest: 'dev.futurae.veilbound.domain.StarterPocketLayoutSelfTest',
+    coreControlSelfTest: 'dev.futurae.veilbound.domain.CoreControlSelfTest',
+    transducerTierSelfTest: 'dev.futurae.veilbound.energy.TransducerTierSelfTest',
+    dimensionalTransducerSelfTest: 'dev.futurae.veilbound.energy.DimensionalTransducerSelfTest',
+    transducerMatterInputSelfTest: 'dev.futurae.veilbound.energy.TransducerMatterInputSelfTest',
+    veilInventorySelfTest: 'dev.futurae.veilbound.inventory.VeilInventorySelfTest',
+    veilInventoryTerminalPageSelfTest: 'dev.futurae.veilbound.inventory.VeilInventoryTerminalPageSelfTest',
+    veilCraftingSelfTest: 'dev.futurae.veilbound.inventory.VeilCraftingSelfTest'
+]
+firstReleaseSelfTests.each { taskName, testMain ->
+    tasks.register(taskName, JavaExec) {
+        dependsOn testClasses
+        classpath = sourceSets.test.runtimeClasspath
+        mainClass = testMain
+    }
+    check.dependsOn tasks.named(taskName)
+}
+'''
+    build_file.write_text(build_text, encoding='utf-8')
+
 print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 admin_surface=slim dynamo_title=translated')
