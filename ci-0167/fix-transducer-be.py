@@ -108,6 +108,13 @@ if not domain_transition_pass.is_file():
     raise SystemExit('missing Domain transition visual pass')
 subprocess.run([sys.executable, str(domain_transition_pass), str(root)], check=True)
 
+# The binding animation is now the only success feedback; remove the historical success translation
+# too rather than leaving a dead message key in the cleaned first-release resources.
+lang = root / 'src/main/resources/assets/veilbound/lang/en_us.json'
+translations = json.loads(lang.read_text(encoding='utf-8'))
+translations.pop('message.veilbound.genesis_seed.bound', None)
+lang.write_text(json.dumps(translations, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
 print(
     f'VEILBOUND_0167_TRANSDUCER_BE_FIX=PASS sha256={sha} bytes={len(raw)} '
     'models=raised_core textures=casing_panel_animated_core legacy_flat=absent')
