@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   validate:
-    uses: ./.github/workflows/validate-0.1.66.yml
+    uses: ./.github/workflows/validate-0.1.67.yml
     secrets: inherit
 
   client-preflight:
-    uses: ./.github/workflows/validate-0.1.66-client.yml
+    uses: ./.github/workflows/validate-0.1.67-client.yml
     secrets: inherit
