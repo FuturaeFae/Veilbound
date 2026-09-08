@@ -51,4 +51,13 @@ pylon = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeBo
 if pylon.exists():
     pylon.unlink()
 
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed')
+# Replace starter-shell regression assumptions from the old 1x1x2 prototype with the actual
+# centered 3x3x3 first-release geometry. Keep this as a real collision regression, not a disabled test.
+boundary_test = root / 'src/test/java/dev/futurae/veilbound/network/VeilBoundarySnapshotPayloadSelfTest.java'
+shutil.copyfile(ci / 'VeilBoundarySnapshotPayloadSelfTest.java', boundary_test)
+owner_travel_test = root / 'src/test/java/dev/futurae/veilbound/domain/OwnerDomainTravelSelfTest.java'
+owner_text = owner_travel_test.read_text(encoding='utf-8')
+owner_text = owner_text.replace('initial pocket stays 1x1x2', 'initial Domain stays centered 3x3x3')
+owner_travel_test.write_text(owner_text, encoding='utf-8')
+
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3')
