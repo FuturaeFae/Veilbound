@@ -1,5 +1,5 @@
 from pathlib import Path
-import base64, hashlib, shutil, sys, tarfile
+import base64, hashlib, json, shutil, sys, tarfile
 
 root = Path(sys.argv[1]).resolve()
 ci = Path(__file__).resolve().parent
@@ -60,4 +60,24 @@ owner_text = owner_travel_test.read_text(encoding='utf-8')
 owner_text = owner_text.replace('initial pocket stays 1x1x2', 'initial Domain stays centered 3x3x3')
 owner_travel_test.write_text(owner_text, encoding='utf-8')
 
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3')
+# Pre-test hardening: the actively registered /domain admin surface must exercise only the slim
+# first-release state model. In particular, admin-created Domains must initialize exactly like a
+# Genesis Seed instead of creating the old core-inactive prototype state.
+admin = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeDomainAdminCommandCoordinator.java'
+shutil.copyfile(ci / 'NeoForgeDomainAdminCommandCoordinator.java', admin)
+
+# The Dynamo is a visible first-release machine. Give its vanilla container title a real translation
+# and remove the stale Spatial Generator wording from the active block source.
+lang_path = root / 'src/main/resources/assets/veilbound/lang/en_us.json'
+lang = json.loads(lang_path.read_text(encoding='utf-8'))
+lang['container.veilbound.boundary_dynamo'] = 'Boundary Dynamo'
+lang_path.write_text(json.dumps(lang, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+dynamo = root / 'src/main/java/dev/futurae/veilbound/block/BoundaryDynamoBlock.java'
+dynamo_text = dynamo.read_text(encoding='utf-8')
+dynamo_text = dynamo_text.replace(
+    'Pre-Core FE source used to bootstrap the Spatial Generator without requiring another tech mod.\n * The machine uses ordinary furnace fuels to drive a boundary-induction coil.',
+    'Early first-release FE source for the Dimensional Transducer without requiring another tech mod.\n * The machine uses ordinary furnace fuels to drive a boundary-induction coil.')
+dynamo.write_text(dynamo_text, encoding='utf-8')
+
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 admin_surface=slim dynamo_title=translated')
