@@ -118,4 +118,21 @@ firstReleaseSelfTests.each { taskName, testMain ->
 '''
     build_file.write_text(build_text, encoding='utf-8')
 
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter admin_surface=slim stale_tags=removed dynamo_title=translated')
+# Final reconstruction-time resource guard. A removed first-release identifier hiding in a generic
+# Minecraft tag/config path must fail here even when its filename itself looks harmless.
+resources = root / 'src/main/resources'
+forbidden_ids = (
+    'mnemonic', 'axiomatic', 'axiomite', 'phaseweave', 'spatial_generator',
+    'memory_archive', 'domain_orrery', 'boundary_pylon', 'threshold_frame', 'veil_lance'
+)
+resource_paths = [p for p in resources.rglob('*') if p.is_file()]
+path_blob = '\n'.join(str(p.relative_to(resources)).lower() for p in resource_paths)
+text_blob = '\n'.join(
+    p.read_text(encoding='utf-8', errors='ignore').lower()
+    for p in resource_paths if p.suffix.lower() in {'.json', '.mcmeta', '.toml'}
+)
+for forbidden in forbidden_ids:
+    if forbidden in path_blob or forbidden in text_blob:
+        raise SystemExit(f'removed first-release resource identifier survived reconstruction: {forbidden}')
+
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter admin_surface=slim stale_tags=removed resource_guard=strict dynamo_title=translated')
