@@ -61,10 +61,11 @@ owner_text = owner_travel_test.read_text(encoding='utf-8')
 owner_text = owner_text.replace('initial pocket stays 1x1x2', 'initial Domain stays centered 3x3x3')
 owner_travel_test.write_text(owner_text, encoding='utf-8')
 
-# Keep the Core-control regression aligned with the actual first-release balance contract:
-# TransductionPolicy is (FE per Matter, Matter per DE), so 96 FE + 32 Matter must credit 1 DE.
+# Keep first-release Core regressions aligned with the actual balance and no-physical-Pylon model.
 core_control_test = root / 'src/test/java/dev/futurae/veilbound/domain/CoreControlSelfTest.java'
 shutil.copyfile(ci / 'CoreControlSelfTest.java', core_control_test)
+first_release_expansion_test = root / 'src/test/java/dev/futurae/veilbound/domain/FirstReleaseExpansionSelfTest.java'
+shutil.copyfile(ci / 'FirstReleaseExpansionSelfTest.java', first_release_expansion_test)
 
 # Pre-test hardening: the actively registered /domain admin surface must exercise only the slim
 # first-release state model. In particular, admin-created Domains must initialize exactly like a
@@ -87,8 +88,8 @@ dynamo_text = dynamo_text.replace(
 dynamo.write_text(dynamo_text, encoding='utf-8')
 
 # Turn the existing loader-neutral first-release regression mains into real `check` gates. These
-# cover binding/starter geometry, Core controls, all four Transducer throughputs, Matter intake,
-# the hybrid terminal, terminal paging/search, and atomic crafting before a human client test.
+# cover binding/starter geometry, Core controls and no-Pylon expansion, all four Transducer
+# throughputs, Matter intake, the hybrid terminal, terminal paging/search, and atomic crafting.
 build_file = root / 'build.gradle'
 build_text = build_file.read_text(encoding='utf-8')
 marker = "// VEILBOUND_0166_FIRST_RELEASE_SELF_TESTS"
@@ -100,6 +101,7 @@ def firstReleaseSelfTests = [
     genesisSeedSelfTest: 'dev.futurae.veilbound.ritual.GenesisSeedSelfTest',
     starterPocketLayoutSelfTest: 'dev.futurae.veilbound.domain.StarterPocketLayoutSelfTest',
     coreControlSelfTest: 'dev.futurae.veilbound.domain.CoreControlSelfTest',
+    firstReleaseExpansionSelfTest: 'dev.futurae.veilbound.domain.FirstReleaseExpansionSelfTest',
     transducerTierSelfTest: 'dev.futurae.veilbound.energy.TransducerTierSelfTest',
     dimensionalTransducerSelfTest: 'dev.futurae.veilbound.energy.DimensionalTransducerSelfTest',
     transducerMatterInputSelfTest: 'dev.futurae.veilbound.energy.TransducerMatterInputSelfTest',
@@ -135,4 +137,4 @@ for forbidden in forbidden_ids:
     if forbidden in path_blob or forbidden in text_blob:
         raise SystemExit(f'removed first-release resource identifier survived reconstruction: {forbidden}')
 
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter admin_surface=slim stale_tags=removed resource_guard=strict dynamo_title=translated')
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter expansion_test=no_physical_pylon admin_surface=slim stale_tags=removed resource_guard=strict dynamo_title=translated')
