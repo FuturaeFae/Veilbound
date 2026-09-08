@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
           echo "da347e2243e47af944167241b874b560be21625d623f53af0e99f6c31631f507  baseline-0164/Veilbound-0.1.64-dev-source.tar.xz" | sha256sum -c -
           test -s ci-0165/apply-0165.py
-          test "$(find ci-0165/fragments -maxdepth 1 -type f | wc -l)" -eq 11
+          test "$(find ci-0165/fragments -maxdepth 1 -type f | wc -l)" -eq 12
           mkdir -p source-0165
           tar -xJf baseline-0164/Veilbound-0.1.64-dev-source.tar.xz -C source-0165
           python3 ci-0165/apply-0165.py source-0165
@@ -60,6 +60,8 @@ jobs:
           grep -q 'PLAYER_STORAGE_SLOTS = 36' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftingController.java"
           grep -q 'Matter patterns are identities backed by the shared Matter pool' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
           grep -q 'return VeilStorageCapacity.EFFECTIVELY_UNLIMITED' "$ROOT/src/main/java/dev/futurae/veilbound/inventory/VeilStoragePolicy.java"
+          grep -q 'a bound Domain immediately unlocks its Veil Inventory' "$ROOT/src/test/java/dev/futurae/veilbound/inventory/VeilInventorySelfTest.java"
+          ! grep -R -q 'VeilStoragePolicy.RESONANT' "$ROOT/src/test/java/dev/futurae/veilbound/inventory"
           ! grep -q 'veil_transmutation_locked' "$ROOT/src/main/java/dev/futurae/veilbound/matter/MatterTransmutationService.java"
           ! grep -q 'hasFeature(DomainFeature.VEIL_CRAFTING)' "$ROOT/src/main/java/dev/futurae/veilbound/inventory/VeilCraftingService.java"
           python3 - <<'PY'
