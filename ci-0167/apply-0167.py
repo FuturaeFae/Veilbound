@@ -138,12 +138,22 @@ if not ae2_patch.is_file():
     raise SystemExit('missing 0.1.67 AE-style withdrawal patch')
 subprocess.run(['patch', '-p1', '--batch', '-i', str(ae2_patch)], cwd=root, check=True)
 
+# Apply the broader post-test polish pass: complete vanilla Matter coverage, persistent terminal mode,
+# shared vanilla GUI styling, distinct ore animations/drops, adjacent Void Anchor placement, and
+# the wispy Genesis Seed asset with color isolated to its center.
+feature_pass = ci / 'apply-feature-pass.py'
+if not feature_pass.is_file():
+    raise SystemExit('missing 0.1.67 feature-pass applicator')
+subprocess.run([sys.executable, str(feature_pass), str(root)], check=True)
+
 terminal = root / 'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java'
 terminal_text = terminal.read_text(encoding='utf-8')
 if 'ContainerInput.PICKUP' not in terminal_text or 'setTooltipForNextFrame(font, stack' not in terminal_text:
     raise SystemExit('Veil Inventory GUI polish did not apply')
 if '(maxStack + 1) / 2' not in terminal_text:
     raise SystemExit('ME-style half-stack withdrawal polish did not apply')
+if 'VeilInventoryPreferences.craftingMode()' not in terminal_text:
+    raise SystemExit('persistent Veil Inventory mode did not apply')
 server_terminal = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java'
 server_terminal_text = server_terminal.read_text(encoding='utf-8')
 if 'Math.min(payload.resource().getMaxStackSize(), Math.max(1, payload.quantity()))' not in server_terminal_text:
@@ -156,4 +166,4 @@ collision = root / 'src/main/java/dev/futurae/veilbound/block/EngineeringMonumen
 if 'VeilboundBlocks.VEIL_LANCE != null' not in collision.read_text(encoding='utf-8'):
     raise SystemExit('VEIL_LANCE collision null guard did not apply')
 
-print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS gui_polish=PASS core_buttons=PASS ae_withdrawal=PASS')
+print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS gui_polish=PASS core_buttons=PASS ae_withdrawal=PASS feature_polish=PASS')
