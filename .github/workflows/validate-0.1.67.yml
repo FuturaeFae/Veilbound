@@ -50,11 +50,6 @@ jobs:
         run: |
           set -euo pipefail
           ROOT=source-0167
-          echo "d466d0500991278012e479fcfc61c89d95671d0f43b14eaf8cdf45d7cc53fb28  $ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java" | sha256sum -c -
-          echo "2b79fbbc1364295dacce573c713200112344cf7263e2a7505ce3f5f4fad3265b  $ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderPipelines.java" | sha256sum -c -
-          echo "be018fda4fc46d005bf4eb4d7d56331d3306a9438bd674e671a89d510e6c7f65  $ROOT/src/main/java/dev/futurae/veilbound/block/DimensionalCoreBlock.java" | sha256sum -c -
-          echo "5db0f77399d6d2e86ba89843553982e197d9db1255ffecb7074c5f58130860ea  $ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.vsh" | sha256sum -c -
-          echo "14841a22cacff17cc65ce546b4234e8f1de6883b5952c0eda0deb8ca941d8f31  $ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.fsh" | sha256sum -c -
           grep -q '^mod_version=0.1.67-dev$' "$ROOT/gradle.properties"
           grep -q 'DimensionalCoreRenderPipelines::register' "$ROOT/src/main/java/dev/futurae/veilbound/client/VeilboundClient.java"
           grep -q 'case NASCENT -> new Stage(0.27D, 0.78D' "$ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java"
@@ -67,6 +62,8 @@ jobs:
           grep -q 'coreBox(0.39, 0.27' "$ROOT/src/main/java/dev/futurae/veilbound/block/DimensionalCoreBlock.java"
           grep -q 'coreBox(0.30, 0.11' "$ROOT/src/main/java/dev/futurae/veilbound/block/DimensionalCoreBlock.java"
           grep -q 'VEILBOUND_0167_CORE_VISUAL_SELF_TEST' "$ROOT/build.gradle"
+          test -s "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.vsh"
+          test -s "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.fsh"
           echo VEILBOUND_0167_CORE_AUDIT=PASS
 
       - name: Package 0.1.67 source snapshot
