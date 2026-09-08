@@ -58,4 +58,70 @@ check.dependsOn tasks.named('dimensionalCoreVisualScaleSelfTest')
 '''
     build.write_text(text, encoding='utf-8')
 
-print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5')
+# 0.1.67 hotfix: first-release engineering monuments were intentionally removed in 0.1.66,
+# leaving their deprecated DeferredBlock holders null. Legacy collision/interaction code must never
+# dereference those null holders while normal worlds are loading or blocks are being clicked.
+monument = root / 'src/main/java/dev/futurae/veilbound/block/EngineeringMonumentBlock.java'
+text = monument.read_text(encoding='utf-8')
+helper_marker = '    /** Detailed local collision boxes used by the out-of-cell collision supplement. */\n'
+helper = '''    private static boolean legacyRegistrationsAvailable() {
+        return VeilboundBlocks.CHRONAL_ENGINE_BLOCK != null
+                && VeilboundBlocks.MNEMONIC_NEXUS_BLOCK != null
+                && VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK != null
+                && VeilboundBlocks.HORIZON_STABILIZER_BLOCK != null;
+    }
+
+'''
+if 'private static boolean legacyRegistrationsAvailable()' not in text:
+    if helper_marker not in text:
+        raise SystemExit('could not locate EngineeringMonumentBlock hotfix insertion point')
+    text = text.replace(helper_marker, helper + helper_marker, 1)
+for signature, guard in [
+    ('    public static List<AABB> collisionBoxes(BlockState state) {\n', '        if (!legacyRegistrationsAvailable()) return List.of();\n'),
+    ('    public static boolean isMonument(BlockState state) {\n', '        if (!legacyRegistrationsAvailable()) return false;\n'),
+    ('    private static VoxelShape shapeFor(BlockState state) {\n', '        if (!legacyRegistrationsAvailable()) return Shapes.block();\n'),
+]:
+    guarded = signature + guard
+    if guarded not in text:
+        if signature not in text:
+            raise SystemExit(f'could not locate EngineeringMonumentBlock method: {signature.strip()}')
+        text = text.replace(signature, guarded, 1)
+monument.write_text(text, encoding='utf-8')
+
+controller = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeEngineeringStationController.java'
+text = controller.read_text(encoding='utf-8')
+old = '''        if (block==VeilboundBlocks.CHRONAL_ENGINE_BLOCK.get()
+                || block==VeilboundBlocks.MNEMONIC_NEXUS_BLOCK.get()
+                || block==VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK.get()
+                || block==VeilboundBlocks.HORIZON_STABILIZER_BLOCK.get()) {
+'''
+new = '''        if (VeilboundBlocks.CHRONAL_ENGINE_BLOCK != null
+                && VeilboundBlocks.MNEMONIC_NEXUS_BLOCK != null
+                && VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK != null
+                && VeilboundBlocks.HORIZON_STABILIZER_BLOCK != null
+                && (block==VeilboundBlocks.CHRONAL_ENGINE_BLOCK.get()
+                || block==VeilboundBlocks.MNEMONIC_NEXUS_BLOCK.get()
+                || block==VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK.get()
+                || block==VeilboundBlocks.HORIZON_STABILIZER_BLOCK.get())) {
+'''
+if new not in text:
+    if old not in text:
+        raise SystemExit('could not locate engineering monument right-click branch')
+    text = text.replace(old, new, 1)
+controller.write_text(text, encoding='utf-8')
+
+entity = root / 'src/main/java/dev/futurae/veilbound/block/entity/EngineeringMonumentBlockEntity.java'
+text = entity.read_text(encoding='utf-8')
+signature = '    public static @Nullable EngineeringMonumentKind kind(BlockState state) {\n'
+guard = '''        if (VeilboundBlocks.CHRONAL_ENGINE_BLOCK == null
+                || VeilboundBlocks.MNEMONIC_NEXUS_BLOCK == null
+                || VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK == null
+                || VeilboundBlocks.HORIZON_STABILIZER_BLOCK == null) return null;
+'''
+if signature + guard not in text:
+    if signature not in text:
+        raise SystemExit('could not locate EngineeringMonumentBlockEntity.kind')
+    text = text.replace(signature, signature + guard, 1)
+entity.write_text(text, encoding='utf-8')
+
+print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS')
