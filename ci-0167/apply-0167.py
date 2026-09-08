@@ -1,9 +1,13 @@
 from pathlib import Path
-import shutil, subprocess, sys
+import re
+import shutil
+import subprocess
+import sys
 
 root = Path(sys.argv[1]).resolve()
 ci = Path(__file__).resolve().parent
 
+# Stage the 0.1.67 crystalline Core implementation over the exact validated 0.1.66 baseline.
 copies = {
     'DimensionalCoreRenderer.java': 'src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java',
     'DimensionalCoreRenderPipelines.java': 'src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderPipelines.java',
@@ -56,80 +60,14 @@ tasks.register('dimensionalCoreVisualScaleSelfTest', JavaExec) {
 }
 check.dependsOn tasks.named('dimensionalCoreVisualScaleSelfTest')
 '''
-    build.write_text(text, encoding='utf-8')
+build.write_text(text, encoding='utf-8')
 
-# 0.1.67 hotfix: first-release engineering monuments were intentionally removed in 0.1.66,
-# leaving their deprecated DeferredBlock holders null. Legacy collision/interaction code must never
-# dereference those null holders while normal worlds are loading or blocks are being clicked.
-monument = root / 'src/main/java/dev/futurae/veilbound/block/EngineeringMonumentBlock.java'
-text = monument.read_text(encoding='utf-8')
-helper_marker = '    /** Detailed local collision boxes used by the out-of-cell collision supplement. */\n'
-helper = '''    private static boolean legacyRegistrationsAvailable() {
-        return VeilboundBlocks.CHRONAL_ENGINE_BLOCK != null
-                && VeilboundBlocks.MNEMONIC_NEXUS_BLOCK != null
-                && VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK != null
-                && VeilboundBlocks.HORIZON_STABILIZER_BLOCK != null;
-    }
-
-'''
-if 'private static boolean legacyRegistrationsAvailable()' not in text:
-    if helper_marker not in text:
-        raise SystemExit('could not locate EngineeringMonumentBlock hotfix insertion point')
-    text = text.replace(helper_marker, helper + helper_marker, 1)
-for signature, guard in [
-    ('    public static List<AABB> collisionBoxes(BlockState state) {\n', '        if (!legacyRegistrationsAvailable()) return List.of();\n'),
-    ('    public static boolean isMonument(BlockState state) {\n', '        if (!legacyRegistrationsAvailable()) return false;\n'),
-    ('    private static VoxelShape shapeFor(BlockState state) {\n', '        if (!legacyRegistrationsAvailable()) return Shapes.block();\n'),
-]:
-    guarded = signature + guard
-    if guarded not in text:
-        if signature not in text:
-            raise SystemExit(f'could not locate EngineeringMonumentBlock method: {signature.strip()}')
-        text = text.replace(signature, guarded, 1)
-monument.write_text(text, encoding='utf-8')
-
-controller = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeEngineeringStationController.java'
-text = controller.read_text(encoding='utf-8')
-old = '''        if (block==VeilboundBlocks.CHRONAL_ENGINE_BLOCK.get()
-                || block==VeilboundBlocks.MNEMONIC_NEXUS_BLOCK.get()
-                || block==VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK.get()
-                || block==VeilboundBlocks.HORIZON_STABILIZER_BLOCK.get()) {
-'''
-new = '''        if (VeilboundBlocks.CHRONAL_ENGINE_BLOCK != null
-                && VeilboundBlocks.MNEMONIC_NEXUS_BLOCK != null
-                && VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK != null
-                && VeilboundBlocks.HORIZON_STABILIZER_BLOCK != null
-                && (block==VeilboundBlocks.CHRONAL_ENGINE_BLOCK.get()
-                || block==VeilboundBlocks.MNEMONIC_NEXUS_BLOCK.get()
-                || block==VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK.get()
-                || block==VeilboundBlocks.HORIZON_STABILIZER_BLOCK.get())) {
-'''
-if new not in text:
-    if old not in text:
-        raise SystemExit('could not locate engineering monument right-click branch')
-    text = text.replace(old, new, 1)
-controller.write_text(text, encoding='utf-8')
-
-entity = root / 'src/main/java/dev/futurae/veilbound/block/entity/EngineeringMonumentBlockEntity.java'
-text = entity.read_text(encoding='utf-8')
-signature = '    public static @Nullable EngineeringMonumentKind kind(BlockState state) {\n'
-guard = '''        if (VeilboundBlocks.CHRONAL_ENGINE_BLOCK == null
-                || VeilboundBlocks.MNEMONIC_NEXUS_BLOCK == null
-                || VeilboundBlocks.AXIOM_CRUCIBLE_BLOCK == null
-                || VeilboundBlocks.HORIZON_STABILIZER_BLOCK == null) return null;
-'''
-if signature + guard not in text:
-    if signature not in text:
-        raise SystemExit('could not locate EngineeringMonumentBlockEntity.kind')
-    text = text.replace(signature, signature + guard, 1)
-entity.write_text(text, encoding='utf-8')
-
-# Terminal/Core GUI polish is intentionally kept as reviewable patches against the exact 0.1.66
-# source baseline. The first patch also carries the verifier-safe VEIL_LANCE null guard used by the tested hotfix.
-patch_file = ci / 'gui-polish.patch'
-if not patch_file.is_file():
+# Terminal/Core interaction polish. This applies to the historical baseline before the final cleanup
+# deletes all disconnected development-era feature clusters.
+gui_patch = ci / 'gui-polish.patch'
+if not gui_patch.is_file():
     raise SystemExit('missing 0.1.67 GUI polish patch')
-subprocess.run(['patch', '-p1', '--batch', '-i', str(patch_file)], cwd=root, check=True)
+subprocess.run(['patch', '-p1', '--batch', '-i', str(gui_patch)], cwd=root, check=True)
 
 # Match the current ME-terminal interaction model more closely: left click withdraws a full stack,
 # right click withdraws half a stack, while the server remains authoritative over the requested amount.
@@ -138,14 +76,14 @@ if not ae2_patch.is_file():
     raise SystemExit('missing 0.1.67 AE-style withdrawal patch')
 subprocess.run(['patch', '-p1', '--batch', '-i', str(ae2_patch)], cwd=root, check=True)
 
-# Apply the broader post-test polish pass: complete vanilla Matter coverage, persistent terminal mode,
-# shared vanilla GUI styling, distinct ore animations/drops, adjacent Void Anchor placement, and
-# the wispy Genesis Seed asset with color isolated to its center.
+# Complete vanilla Matter coverage, persistent terminal mode, shared vanilla GUI styling, distinct
+# resource animations/drops, adjacent Void Anchor placement, and the wispy Genesis Seed asset.
 feature_pass = ci / 'apply-feature-pass.py'
 if not feature_pass.is_file():
     raise SystemExit('missing 0.1.67 feature-pass applicator')
 subprocess.run([sys.executable, str(feature_pass), str(root)], check=True)
 
+# Verify the requested active feature changes before dead-source pruning.
 terminal = root / 'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java'
 terminal_text = terminal.read_text(encoding='utf-8')
 if 'ContainerInput.PICKUP' not in terminal_text or 'setTooltipForNextFrame(font, stack' not in terminal_text:
@@ -154,16 +92,48 @@ if '(maxStack + 1) / 2' not in terminal_text:
     raise SystemExit('ME-style half-stack withdrawal polish did not apply')
 if 'VeilInventoryPreferences.craftingMode()' not in terminal_text:
     raise SystemExit('persistent Veil Inventory mode did not apply')
-server_terminal = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java'
-server_terminal_text = server_terminal.read_text(encoding='utf-8')
-if 'Math.min(payload.resource().getMaxStackSize(), Math.max(1, payload.quantity()))' not in server_terminal_text:
-    raise SystemExit('server withdrawal quantity guard did not apply')
-core_screen = root / 'src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java'
-core_text = core_screen.read_text(encoding='utf-8')
-if 'completely covered the tabs, expansion toggle, and six direction buttons' not in core_text:
-    raise SystemExit('Core control widget-layer fix did not apply')
-collision = root / 'src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java'
-if 'VeilboundBlocks.VEIL_LANCE != null' not in collision.read_text(encoding='utf-8'):
-    raise SystemExit('VEIL_LANCE collision null guard did not apply')
 
-print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS gui_polish=PASS core_buttons=PASS ae_withdrawal=PASS feature_polish=PASS')
+server_terminal = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java'
+if 'Math.min(payload.resource().getMaxStackSize(), Math.max(1, payload.quantity()))' not in server_terminal.read_text(encoding='utf-8'):
+    raise SystemExit('server withdrawal quantity guard did not apply')
+
+core_screen = root / 'src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java'
+if 'completely covered the tabs, expansion toggle, and six direction buttons' not in core_screen.read_text(encoding='utf-8'):
+    raise SystemExit('Core control widget-layer fix did not apply')
+
+# Final cleanup: remove null registry aliases, disconnected feature implementations, orphaned render
+# resources and tests, and replace the old monument/lance collision supplement with a Core-only one.
+cleanup = ci / 'cleanup-unused.py'
+if not cleanup.is_file():
+    raise SystemExit('missing deterministic unused-source cleanup')
+subprocess.run([sys.executable, str(cleanup), str(root)], check=True)
+
+# The deleted monument test used to be wired directly into check; remove its now-orphaned task.
+text = build.read_text(encoding='utf-8')
+text = re.sub(
+    r"\ntasks\.register\('engineeringMonumentFieldSelfTest', JavaExec\) \{.*?\n\}\n\ncheck\.dependsOn tasks\.named\('engineeringMonumentFieldSelfTest'\)\n",
+    '\n', text, flags=re.S)
+build.write_text(text, encoding='utf-8')
+
+# Final source-tree audit. At this point the old compatibility names must not exist anywhere in
+# runtime source; executed persistence/migration readers remain because they are active safety code.
+java_root = root / 'src/main/java'
+all_java = '\n'.join(path.read_text(encoding='utf-8', errors='ignore') for path in java_root.rglob('*.java'))
+for forbidden in (
+    'EngineeringMonumentBlock', 'EngineeringMonumentCollisionState', 'EngineeringMonumentRenderer',
+    'VeilLanceBlock', 'VeilboundDataComponents', 'NeoForgeVeilInterfaceCapabilities',
+    '@Deprecated public static final', 'VOID_ANCHOR_FLOOR'):
+    if forbidden in all_java:
+        raise SystemExit(f'0.1.67 cleanup audit failed: {forbidden}')
+
+core_collision = root / 'src/main/java/dev/futurae/veilbound/block/DimensionalCoreCollisionState.java'
+if not core_collision.is_file():
+    raise SystemExit('Core-only oversized collision source missing after cleanup')
+core_collision_text = core_collision.read_text(encoding='utf-8')
+if 'VeilboundBlocks.DIMENSIONAL_CORE.get()' not in core_collision_text or 'VEIL_LANCE' in core_collision_text:
+    raise SystemExit('Core-only collision cleanup is incomplete')
+
+if 'engineeringMonumentFieldSelfTest' in build.read_text(encoding='utf-8'):
+    raise SystemExit('orphaned engineering monument validation task remained')
+
+print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 gui_polish=PASS core_buttons=PASS ae_withdrawal=PASS feature_polish=PASS unused_legacy=REMOVED')
