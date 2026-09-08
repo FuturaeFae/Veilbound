@@ -1,0 +1,233 @@
+--- a/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java	2026-09-08 20:33:51.000000000 +0000
++++ b/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java	2026-09-08 20:53:11.719099147 +0000
+@@ -35,6 +35,8 @@
+     private static final int GRID_ROWS = 9;
+     private static final int GRID_CAPACITY = GRID_COLUMNS * GRID_ROWS;
+     private static final int SLOT = 18;
++    private static final int SCROLL_WIDTH = 14;
++    private static final int SCROLL_ARROW = 14;
+     private static final int PANEL_WIDTH = 214;
+     private static final int PANEL_HEIGHT = 322;
+     private static final int SEARCH_DEBOUNCE_TICKS = 6;
+@@ -101,14 +103,14 @@
+         int top = panelTop();
+ 
+         addRenderableWidget(Button.builder(sortShort(activeSort()), button -> cycleSort())
+-                .bounds(left + 8, top + 30, 44, 18).build());
++                .bounds(left + 8, top + 30, 40, 18).build());
+ 
+         addRenderableWidget(Button.builder(
+                         Component.literal(mode == Mode.INVENTORY ? "Craft" : "Inv"),
+                         button -> toggleMode())
+-                .bounds(left + 56, top + 30, 44, 18).build());
++                .bounds(left + 52, top + 30, 40, 18).build());
+ 
+-        searchBox = new EditBox(font, 84, 18, Component.translatable("screen.veilbound.veil_inventory.search"));
++        searchBox = new EditBox(font, 92, 18, Component.translatable("screen.veilbound.veil_inventory.search"));
+         searchBox.setMaxLength(VeilInventoryActionPayload.MAX_QUERY_LENGTH);
+         searchBox.setValue(activeQuery());
+         searchBox.setHint(Component.translatable("screen.veilbound.veil_inventory.search_hint"));
+@@ -117,7 +119,7 @@
+             else craftingQuery = value == null ? "" : value;
+             searchDebounce = SEARCH_DEBOUNCE_TICKS;
+         });
+-        searchBox.setPosition(left + 104, top + 30);
++        searchBox.setPosition(left + 96, top + 30);
+         addRenderableWidget(searchBox);
+ 
+         addRenderableWidget(Button.builder(Component.literal("×"), button -> clearSearch())
+@@ -128,15 +130,6 @@
+         // Storage/result cells are virtual terminal slots, not GUI buttons. Their click handling is
+         // performed in mouseClicked so they never acquire button visuals or movable-slot semantics.
+ 
+-        Button previous = Button.builder(Component.literal("▲"), button -> changePage(-1))
+-                .bounds(scrollLeft(), gridTop(), 14, 14).build();
+-        previous.active = activePage() > 0;
+-        addRenderableWidget(previous);
+-        Button next = Button.builder(Component.literal("▼"), button -> changePage(1))
+-                .bounds(scrollLeft(), gridTop() + GRID_ROWS * SLOT - 14, 14, 14).build();
+-        next.active = activePage() + 1 < activePageCount();
+-        addRenderableWidget(next);
+-
+         // The lower inventory is intentionally not represented by Buttons. Normal clicks are routed
+         // through Minecraft's player inventory menu so pickup/split/merge/double-click behavior stays vanilla.
+ 
+@@ -205,7 +198,11 @@
+     }
+ 
+     private void changePage(int delta) {
+-        int page = Math.max(0, Math.min(activePageCount() - 1, activePage() + delta));
++        goToPage(activePage() + delta);
++    }
++
++    private void goToPage(int requestedPage) {
++        int page = Math.max(0, Math.min(activePageCount() - 1, requestedPage));
+         if (page == activePage()) return;
+         if (mode == Mode.INVENTORY) requestInventory(page);
+         else {
+@@ -270,6 +267,11 @@
+         int mouseX = (int) event.x();
+         int mouseY = (int) event.y();
+ 
++        // The reference terminal uses a real scrollbar rather than page buttons floating beside the
++        // inventory. Clicking the arrows moves one page; clicking the recessed track jumps to the
++        // nearest page while keeping the server-backed paging model unchanged.
++        if (handleScrollBarClick(mouseX, mouseY, event.button())) return true;
++
+         // Storage/result grid: virtual withdrawal/selection cells, never rearrangeable slots.
+         int gridCell = gridCellAt(mouseX, mouseY);
+         if (gridCell >= 0) {
+@@ -312,6 +314,33 @@
+         return false;
+     }
+ 
++    private boolean handleScrollBarClick(int mouseX, int mouseY, int button) {
++        int x = scrollLeft();
++        int y = gridTop();
++        int h = GRID_ROWS * SLOT;
++        if (button != 0 || !inside(mouseX, mouseY, x, y, SCROLL_WIDTH, h)) return false;
++
++        if (mouseY < y + SCROLL_ARROW) {
++            changePage(-1);
++            return true;
++        }
++        if (mouseY >= y + h - SCROLL_ARROW) {
++            changePage(1);
++            return true;
++        }
++
++        int pages = Math.max(1, activePageCount());
++        if (pages <= 1) return true;
++        int trackStart = y + SCROLL_ARROW + 2;
++        int trackHeight = h - (SCROLL_ARROW * 2) - 4;
++        int thumb = Math.max(12, trackHeight / pages);
++        int travel = Math.max(1, trackHeight - thumb);
++        int pointer = Math.max(0, Math.min(travel, mouseY - trackStart - thumb / 2));
++        int page = (int) Math.round((double) pointer * (pages - 1) / travel);
++        goToPage(page);
++        return true;
++    }
++
+     private int gridCellAt(int mouseX, int mouseY) {
+         if (!inside(mouseX, mouseY, gridLeft(), gridTop(), GRID_COLUMNS * SLOT, GRID_ROWS * SLOT)) return -1;
+         int col = (mouseX - gridLeft()) / SLOT;
+@@ -448,10 +477,14 @@
+         int top = panelTop();
+ 
+         drawVanillaPanel(graphics, left, top, PANEL_WIDTH, PANEL_HEIGHT);
++
++        // Compact terminal header: title at the left, shared Matter pool at the right, both inside
++        // the same recessed strip. This mirrors the dense machine-terminal layout of the reference
++        // without copying its artwork or sacrificing Veilbound's own controls.
+         drawInset(graphics, left + 8, top + 6, 198, 20);
+-        graphics.centeredText(font,
+-                Component.literal("Matter: " + NUMBERS.format(snapshot.storedMatter())),
+-                left + 107, top + 12, 0xFF404040);
++        graphics.text(font, title, left + 12, top + 12, 0xFF404040, false);
++        String matter = "Matter: " + NUMBERS.format(snapshot.storedMatter());
++        graphics.text(font, Component.literal(matter), left + 202 - font.width(matter), top + 12, 0xFF404040, false);
+ 
+         if (!snapshot.allowed()) {
+             graphics.centeredText(font,
+@@ -462,10 +495,13 @@
+             return;
+         }
+ 
++        // Recess the virtual terminal grid as one dense tray, then bevel every individual cell.
++        // This keeps the slots visually locked together like a real Minecraft machine inventory.
++        drawInset(graphics, gridLeft() - 2, gridTop() - 2, GRID_COLUMNS * SLOT + 4, GRID_ROWS * SLOT + 4);
+         if (mode == Mode.INVENTORY) renderInventoryGrid(graphics, mouseX, mouseY);
+         else renderCraftablesGrid(graphics, mouseX, mouseY);
+ 
+-        renderScrollBar(graphics);
++        renderScrollBar(graphics, mouseX, mouseY);
+         graphics.text(font, Component.translatable("screen.veilbound.veil_inventory.player_inventory"),
+                 left + 8, top + 223, 0xFF404040, false);
+         renderPlayerInventory(graphics, mouseX, mouseY);
+@@ -571,20 +607,59 @@
+         graphics.itemDecorations(font, carried, x, y);
+     }
+ 
+-    private void renderScrollBar(GuiGraphicsExtractor graphics) {
++    private void renderScrollBar(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+         int x = scrollLeft();
+         int y = gridTop();
+         int h = GRID_ROWS * SLOT;
+-        graphics.fill(x, y, x + 14, y + h, 0xFF8B8B8B);
+-        graphics.fill(x + 2, y + 16, x + 12, y + h - 16, 0xFF5C5C5C);
+         int pages = Math.max(1, activePageCount());
+-        int track = h - 36;
+-        int thumb = Math.max(10, track / pages);
+-        int travel = Math.max(0, track - thumb);
++
++        // Beveled scrollbar housing and recessed central track, matching the same visual hierarchy
++        // as vanilla slots rather than using a flat colored rectangle.
++        graphics.fill(x, y, x + SCROLL_WIDTH, y + h, 0xFF373737);
++        graphics.fill(x + 1, y + 1, x + SCROLL_WIDTH - 1, y + h - 1, 0xFFFFFFFF);
++        graphics.fill(x + 2, y + 2, x + SCROLL_WIDTH - 1, y + h - 1, 0xFF8B8B8B);
++
++        drawScrollArrow(graphics, x, y, true, activePage() > 0,
++                inside(mouseX, mouseY, x, y, SCROLL_WIDTH, SCROLL_ARROW));
++        drawScrollArrow(graphics, x, y + h - SCROLL_ARROW, false, activePage() + 1 < pages,
++                inside(mouseX, mouseY, x, y + h - SCROLL_ARROW, SCROLL_WIDTH, SCROLL_ARROW));
++
++        int trackY = y + SCROLL_ARROW + 2;
++        int trackH = h - (SCROLL_ARROW * 2) - 4;
++        graphics.fill(x + 3, trackY, x + SCROLL_WIDTH - 2, trackY + trackH, 0xFF555555);
++        graphics.fill(x + 4, trackY + 1, x + SCROLL_WIDTH - 3, trackY + trackH - 1, 0xFF6B6B6B);
++
++        int thumb = Math.max(12, trackH / pages);
++        int travel = Math.max(0, trackH - thumb);
+         int pos = pages <= 1 ? 0 : (int) Math.round((double) activePage() * travel / (pages - 1));
+-        graphics.fill(x + 3, y + 18 + pos, x + 11, y + 18 + pos + thumb, 0xFFC6C6C6);
+-        graphics.fill(x + 3, y + 18 + pos, x + 11, y + 19 + pos, 0xFFFFFFFF);
+-        graphics.fill(x + 3, y + 17 + pos + thumb, x + 11, y + 18 + pos + thumb, 0xFF555555);
++        int thumbY = trackY + pos;
++        boolean hovered = inside(mouseX, mouseY, x + 2, thumbY, SCROLL_WIDTH - 3, thumb);
++        int face = hovered ? 0xFFD6D6D6 : 0xFFC6C6C6;
++        graphics.fill(x + 2, thumbY, x + SCROLL_WIDTH - 1, thumbY + thumb, 0xFF373737);
++        graphics.fill(x + 3, thumbY + 1, x + SCROLL_WIDTH - 2, thumbY + thumb - 1, 0xFFFFFFFF);
++        graphics.fill(x + 4, thumbY + 2, x + SCROLL_WIDTH - 2, thumbY + thumb - 1, face);
++        graphics.fill(x + SCROLL_WIDTH - 3, thumbY + 2, x + SCROLL_WIDTH - 2, thumbY + thumb - 1, 0xFF555555);
++        graphics.fill(x + 4, thumbY + thumb - 2, x + SCROLL_WIDTH - 2, thumbY + thumb - 1, 0xFF555555);
++    }
++
++    private void drawScrollArrow(
++            GuiGraphicsExtractor graphics, int x, int y, boolean up, boolean enabled, boolean hovered) {
++        int face = hovered && enabled ? 0xFFD6D6D6 : 0xFFC6C6C6;
++        graphics.fill(x + 2, y + 1, x + SCROLL_WIDTH - 1, y + SCROLL_ARROW - 1, 0xFF373737);
++        graphics.fill(x + 3, y + 2, x + SCROLL_WIDTH - 2, y + SCROLL_ARROW - 2, 0xFFFFFFFF);
++        graphics.fill(x + 4, y + 3, x + SCROLL_WIDTH - 2, y + SCROLL_ARROW - 2, face);
++        int arrow = enabled ? 0xFF303030 : 0xFF777777;
++        int cx = x + SCROLL_WIDTH / 2;
++        int cy = y + SCROLL_ARROW / 2;
++        if (up) {
++            graphics.fill(cx, cy - 3, cx + 1, cy - 2, arrow);
++            graphics.fill(cx - 1, cy - 2, cx + 2, cy - 1, arrow);
++            graphics.fill(cx - 2, cy - 1, cx + 3, cy, arrow);
++        } else {
++            graphics.fill(cx - 2, cy, cx + 3, cy + 1, arrow);
++            graphics.fill(cx - 1, cy + 1, cx + 2, cy + 2, arrow);
++            graphics.fill(cx, cy + 2, cx + 1, cy + 3, arrow);
++        }
+     }
+ 
+     private void renderCraftingSide(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+@@ -646,7 +721,16 @@
+     }
+ 
+     private static void drawSlot(GuiGraphicsExtractor graphics, int x, int y) {
+-        VanillaGuiStyle.slot(graphics, x, y);
++        // Stronger 18x18 bevel than the shared generic slot: dark outside frame, bright top/left
++        // lip, muted interior and a bottom/right shadow. At native scale this reads like the crisp
++        // machine slots in the supplied terminal reference without requiring a baked GUI texture.
++        graphics.fill(x, y, x + SLOT, y + SLOT, 0xFF373737);
++        graphics.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0xFFD8D8D8);
++        graphics.fill(x + 2, y + 2, x + SLOT - 1, y + SLOT - 1, 0xFF8B8B8B);
++        graphics.fill(x + 1, y + 1, x + SLOT - 1, y + 2, 0xFFFFFFFF);
++        graphics.fill(x + 1, y + 1, x + 2, y + SLOT - 1, 0xFFFFFFFF);
++        graphics.fill(x + SLOT - 2, y + 2, x + SLOT - 1, y + SLOT - 1, 0xFF555555);
++        graphics.fill(x + 2, y + SLOT - 2, x + SLOT - 1, y + SLOT - 1, 0xFF555555);
+     }
+ 
+     private void drawCount(GuiGraphicsExtractor graphics, long count, int x, int y) {
