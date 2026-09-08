@@ -16,8 +16,10 @@ replace_file('src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/Ne
 replace_file('src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftingController.java', 'NeoForgeVeilCraftingController', 2)
 replace_file('src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftablesController.java', 'NeoForgeVeilCraftablesController', 3)
 
+# First-release storage is Domain-owned immediately and has no upgrade/capacity gate.
 (root / 'src/main/java/dev/futurae/veilbound/inventory/VeilStoragePolicy.java').write_text('''package dev.futurae.veilbound.inventory;\n\nimport dev.futurae.veilbound.domain.DomainState;\nimport java.util.Objects;\n\n/** First-release storage policy: every bound Domain owns an effectively-unlimited Veil terminal. */\npublic final class VeilStoragePolicy {\n    public VeilStorageCapacity capacityFor(DomainState state) {\n        Objects.requireNonNull(state, "state");\n        return VeilStorageCapacity.EFFECTIVELY_UNLIMITED;\n    }\n}\n''', encoding='utf-8')
 
+# Matter transmutation is inherent to the Domain terminal.
 p = root / 'src/main/java/dev/futurae/veilbound/matter/MatterTransmutationService.java'
 s = p.read_text(encoding='utf-8').replace('import dev.futurae.veilbound.domain.DomainFeature;\n', '')
 for line in [
@@ -29,13 +31,16 @@ for line in [
     s = s.replace(line, '')
 p.write_text(s, encoding='utf-8')
 
+# Crafting is inherent too; if a Matter state is supplied it is always usable.
 p = root / 'src/main/java/dev/futurae/veilbound/inventory/VeilCraftingService.java'
 s = p.read_text(encoding='utf-8').replace('import dev.futurae.veilbound.domain.DomainFeature;\n', '')
 s = s.replace('        if (!state.hasFeature(DomainFeature.VEIL_CRAFTING)) return CraftResult.denied("veil_crafting_locked");\n', '')
 s = s.replace('        if (!state.hasFeature(DomainFeature.VEIL_TRANSMUTATION)) return CraftResult.denied("veil_transmutation_locked");\n', '')
-s = s.replace('        boolean matterEnabled = transmutation != null && state.hasFeature(DomainFeature.VEIL_TRANSMUTATION);', '        boolean matterEnabled = transmutation != null;')
+s = s.replace('        boolean matterEnabled = transmutation != null && state.hasFeature(DomainFeature.VEIL_TRANSMUTATION);',
+              '        boolean matterEnabled = transmutation != null;')
 p.write_text(s, encoding='utf-8')
 
+# Network surface changes.
 p = root / 'src/main/java/dev/futurae/veilbound/network/VeilInventoryActionPayload.java'
 s = p.read_text(encoding='utf-8').replace(
     '        DEPOSIT_HELD,\n        WITHDRAW_ONE,',
@@ -43,13 +48,19 @@ s = p.read_text(encoding='utf-8').replace(
 p.write_text(s, encoding='utf-8')
 
 p = root / 'src/main/java/dev/futurae/veilbound/network/VeilInventorySnapshotPayload.java'
-p.write_text(p.read_text(encoding='utf-8').replace('public static final int MAX_NETWORK_ENTRIES = 45;', 'public static final int MAX_NETWORK_ENTRIES = 90;'), encoding='utf-8')
+p.write_text(p.read_text(encoding='utf-8').replace(
+    'public static final int MAX_NETWORK_ENTRIES = 45;',
+    'public static final int MAX_NETWORK_ENTRIES = 90;'), encoding='utf-8')
 
 p = root / 'src/main/java/dev/futurae/veilbound/network/VeilCraftablesSnapshotPayload.java'
-p.write_text(p.read_text(encoding='utf-8').replace('public static final int PAGE_SIZE = 36;', 'public static final int PAGE_SIZE = 81;'), encoding='utf-8')
+p.write_text(p.read_text(encoding='utf-8').replace(
+    'public static final int PAGE_SIZE = 36;',
+    'public static final int PAGE_SIZE = 81;'), encoding='utf-8')
 
 p = root / 'src/main/java/dev/futurae/veilbound/network/VeilCraftingRequestPayload.java'
-p.write_text(p.read_text(encoding='utf-8').replace('    public enum Action { PREVIEW, CRAFT_ONCE }', '    public enum Action { PREVIEW, CRAFT_ONCE, CRAFT_MAX }'), encoding='utf-8')
+p.write_text(p.read_text(encoding='utf-8').replace(
+    '    public enum Action { PREVIEW, CRAFT_ONCE }',
+    '    public enum Action { PREVIEW, CRAFT_ONCE, CRAFT_MAX }'), encoding='utf-8')
 
 p = root / 'src/main/java/dev/futurae/veilbound/platform/neoforge/network/NeoForgeNetworking.java'
 p.write_text(p.read_text(encoding='utf-8').replace('PROTOCOL = "18"', 'PROTOCOL = "19"'), encoding='utf-8')
@@ -57,6 +68,7 @@ p.write_text(p.read_text(encoding='utf-8').replace('PROTOCOL = "18"', 'PROTOCOL 
 p = root / 'gradle.properties'
 p.write_text(p.read_text(encoding='utf-8').replace('mod_version=0.1.64-dev', 'mod_version=0.1.65-dev'), encoding='utf-8')
 
+# GUI strings kept in the standard lang file, without shipping a giant replacement file in CI.
 p = root / 'src/main/resources/assets/veilbound/lang/en_us.json'
 data = json.loads(p.read_text(encoding='utf-8'))
 data['screen.veilbound.veil_inventory.player_inventory'] = 'Inventory'
@@ -76,7 +88,7 @@ expected = {
     'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java': '76f1ca7e192b1c05ec2b278cdf8ee8b4ef326c168a98be0b50f76708ede1f1a4',
     'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftablesController.java': 'd91d93b6b68c516e8cc3025fa2d57884392f9761d9199b915eb0f1699750462c',
     'src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilCraftingController.java': 'd0db5a1dd910d29e3f09570761ee3ab3e987ffa0d9a37d379d23c8c78d9fc924',
-    'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java': '3a3a885dbbafe967a026d43caa87e0895ab3c1a9b679e6c47ede7fc0ebefbf4c',
+    'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java': '11d82430c13c0a15b21f08c6f39c1e4b2209904da72040c0cf6bd43177352ab3',
     'src/main/java/dev/futurae/veilbound/platform/neoforge/network/NeoForgeNetworking.java': '758df1e7fce08ff8953a658218f395fca047153df04e5208f6585fda4efa2399',
     'src/main/resources/assets/veilbound/lang/en_us.json': 'e311008de39102433503738dc1b00a50f6dc2fc84101f1707799e7cdc2f38454',
 }
