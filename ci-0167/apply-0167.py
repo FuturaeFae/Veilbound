@@ -1,5 +1,5 @@
 from pathlib import Path
-import shutil, sys
+import shutil, subprocess, sys
 
 root = Path(sys.argv[1]).resolve()
 ci = Path(__file__).resolve().parent
@@ -124,4 +124,23 @@ if signature + guard not in text:
     text = text.replace(signature, signature + guard, 1)
 entity.write_text(text, encoding='utf-8')
 
-print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS')
+# Terminal/Core GUI polish is intentionally kept as a reviewable patch against the exact 0.1.66
+# source baseline. It also carries the verifier-safe VEIL_LANCE null guard used by the tested hotfix.
+patch_file = ci / 'gui-polish.patch'
+if not patch_file.is_file():
+    raise SystemExit('missing 0.1.67 GUI polish patch')
+subprocess.run(['patch', '-p1', '--batch', '-i', str(patch_file)], cwd=root, check=True)
+
+terminal = root / 'src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java'
+terminal_text = terminal.read_text(encoding='utf-8')
+if 'ContainerInput.PICKUP' not in terminal_text or 'setTooltipForNextFrame(font, stack' not in terminal_text:
+    raise SystemExit('Veil Inventory GUI polish did not apply')
+core_screen = root / 'src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java'
+core_text = core_screen.read_text(encoding='utf-8')
+if 'completely covered the tabs, expansion toggle, and six direction buttons' not in core_text:
+    raise SystemExit('Core control widget-layer fix did not apply')
+collision = root / 'src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java'
+if 'VeilboundBlocks.VEIL_LANCE != null' not in collision.read_text(encoding='utf-8'):
+    raise SystemExit('VEIL_LANCE collision null guard did not apply')
+
+print('VEILBOUND_0167_APPLY=PASS floating_crystal_core=staged material=physical_prismatic fragments=same_material levels=5 monument_null_safety=PASS gui_polish=PASS core_buttons=PASS')
