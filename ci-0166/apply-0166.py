@@ -20,6 +20,7 @@ for rel in [
     'src/main/resources/data/veilbound',
     'src/main/resources/data/c',
     'src/main/resources/data/minecraft/tags/block',
+    'src/main/resources/data/minecraft/tags/blocks',
 ]:
     target = root / rel
     if target.is_dir(): shutil.rmtree(target)
@@ -117,4 +118,4 @@ firstReleaseSelfTests.each { taskName, testMain ->
 '''
     build_file.write_text(build_text, encoding='utf-8')
 
-print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter admin_surface=slim dynamo_title=translated')
+print(f'VEILBOUND_0166_APPLY=PASS chunks={len(chunks)} sha256={actual} packet_type=restored pylon_coordinator=removed starter_test=3x3x3 core_balance_test=96fe+32matter admin_surface=slim stale_tags=removed dynamo_title=translated')
