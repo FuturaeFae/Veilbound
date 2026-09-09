@@ -44,8 +44,15 @@ if hashlib.sha256(texture_archive).hexdigest() != '49245587c6f78e962f5548c995119
 with tarfile.open(fileobj=io.BytesIO(texture_archive), mode='r:gz') as archive:
     archive.extractall(root)
 
+# Replace the old text PushButton mode toggle with a true two-state segmented selector using
+# Minecraft's own chest and crafting-table item sprites.
+mode_switch = ci / 'mode-switch-finalize.py'
+if not mode_switch.is_file():
+    raise SystemExit('missing Veil Inventory mode switch pass')
+subprocess.run([sys.executable, str(mode_switch), str(root)], check=True)
+
 # Source-level architecture audit. A future reconstruction must fail instead of silently returning
-# to hand-painted fake player inventory slots or item-to-inventory crafting behavior.
+# to hand-painted fake player inventory slots, text mode buttons, or item-to-inventory crafting behavior.
 java = root / 'src/main/java'
 terminal = (java / 'dev/futurae/veilbound/client/screen/VeilInventoryScreen.java').read_text(encoding='utf-8')
 menu = (java / 'dev/futurae/veilbound/menu/VeilInventoryMenu.java').read_text(encoding='utf-8')
@@ -63,6 +70,9 @@ required = {
     'terminal real menu registry': ('VeilboundMenus.VEIL_INVENTORY', menu + menus),
     'server opens terminal menu': ('player.openMenu(new SimpleMenuProvider', inv_controller),
     'craft result placed on cursor': ('placeOnCursor(player, resultStack)', crafting),
+    'mode switch segmented': ('MODE_SWITCH_WIDTH = MODE_SEGMENT * 2', terminal),
+    'mode switch chest': ('new ItemStack(Items.CHEST)', terminal),
+    'mode switch crafting table': ('new ItemStack(Items.CRAFTING_TABLE)', terminal),
     'transducer vanilla dimensions': ('super(menu, inventory, title, 176, 166)', transducer),
     'dynamo vanilla dimensions': ('super(menu, inventory, title, 176, 166)', dynamo),
     'transducer vanilla slot x': ('8 + column * 18', transducer_menu),
@@ -76,6 +86,8 @@ for label, (marker, text) in required.items():
         raise SystemExit(f'vanilla GUI final audit failed: {label}')
 if 'renderPlayerInventory(' in terminal or 'handleContainerInput(' in terminal:
     raise SystemExit('manual/fake player inventory path survived terminal conversion')
+if 'Component.literal(mode == Mode.INVENTORY ? "Craft" : "Inv")' in terminal or 'private void toggleMode()' in terminal:
+    raise SystemExit('old text/button mode toggle survived terminal conversion')
 
 # Exact approved resource audit: all nine animated sheets are 16x128 and have animation metadata.
 assets = root / 'src/main/resources/assets/veilbound/textures'
@@ -101,5 +113,6 @@ for path in resource_paths:
         raise SystemExit(f'approved resource missing animation metadata: {path.name}')
 
 print('VEILBOUND_0167_VANILLA_GUI_FINAL=PASS terminal=real_container player_slots=vanilla cursor=vanilla crafting_result=carried_stack transducer=dynamo_layout machines=176x166')
+print('VEILBOUND_0167_MODE_SWITCH=PASS type=segmented inventory=vanilla_chest crafting=vanilla_crafting_table text_button=absent')
 print('VEILBOUND_0167_AGREED_TEXTURES=PASS exact_payload=locked resources=9 frames=8 dimensions=16x128')
 print('VEILBOUND_0167_SLOW_TELEPORT=PASS swirl_in=1.25s black_cover=1.25s_server_delay swirl_out=1.25s')
