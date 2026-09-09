@@ -1,8 +1,43 @@
 from pathlib import Path
 import base64, gzip, hashlib, json, struct, subprocess, sys, traceback, zlib
 
-PATCH_B64_SHA = '712bf36b7df9fafd03f2f07fce10589d69cea27f289efe57e4ae7e2d6edf06bc'
-PATCH_RAW_SHA = '02f5e952513b0a29440f5480bf68867b68fb1697ac192ad5e1021057337af271'
+RECOVERY_PATCH_B64_SHA = '712bf36b7df9fafd03f2f07fce10589d69cea27f289efe57e4ae7e2d6edf06bc'
+RECOVERY_PATCH_RAW_SHA = '02f5e952513b0a29440f5480bf68867b68fb1697ac192ad5e1021057337af271'
+FULL_PATCH_RAW_SHA = '80e5bf1a645bd3b55c7e665bbbb5dd2ed3d4edace29e239a7a70523e823dd66b'
+
+
+def recover_gzip_deflate(data: bytes) -> bytes:
+    if len(data) < 18 or data[:2] != b'\x1f\x8b' or data[2] != 8:
+        raise ValueError('not a supported gzip member')
+    flags = data[3]
+    pos = 10
+    if flags & 0x04:
+        if pos + 2 > len(data):
+            raise ValueError('truncated gzip FEXTRA')
+        xlen = data[pos] | (data[pos + 1] << 8)
+        pos += 2 + xlen
+    if flags & 0x08:
+        end = data.find(b'\x00', pos)
+        if end < 0:
+            raise ValueError('truncated gzip FNAME')
+        pos = end + 1
+    if flags & 0x10:
+        end = data.find(b'\x00', pos)
+        if end < 0:
+            raise ValueError('truncated gzip FCOMMENT')
+        pos = end + 1
+    if flags & 0x02:
+        pos += 2
+    if pos >= len(data):
+        raise ValueError('truncated gzip payload')
+
+    # Decode only the raw DEFLATE member. This intentionally does not trust the broken gzip
+    # CRC/ISIZE trailer; authenticity is established by the pre-existing decompressed SHA-256.
+    decomp = zlib.decompressobj(-zlib.MAX_WBITS)
+    raw = decomp.decompress(data[pos:]) + decomp.flush()
+    if not decomp.eof:
+        raise ValueError('gzip DEFLATE stream itself is truncated')
+    return raw
 
 
 def png_size(path: Path):
@@ -152,7 +187,6 @@ def audit(root: Path):
         if not (block_dir / f'{name}.png.mcmeta').is_file():
             raise SystemExit(f'{name} animation metadata missing')
 
-    # The stone/deepslate dimensional ore must use exactly the same colorful resource silhouette.
     sw, sh, srows = decode_rgba(block_dir / 'dimensional_shard_ore.png')
     dw, dh, drows = decode_rgba(block_dir / 'deepslate_dimensional_shard_ore.png')
     if (sw, sh) != (dw, dh):
@@ -162,7 +196,6 @@ def audit(root: Path):
     if smask != dmask:
         raise SystemExit('stone/deepslate dimensional ore resource masks differ')
 
-    # Solid block-space occupancy: no see-through top corners inside the 16x16x16 voxel.
     for tier in ['dimensional', 'resonant', 'phase', 'causal']:
         model = json.loads((res / f'models/block/{tier}_transducer.json').read_text(encoding='utf-8'))
         elems = model.get('elements', [])
@@ -182,21 +215,42 @@ def audit(root: Path):
     print('VEILBOUND_0168_RESOURCE_AUDIT=PASS native=32px ores=host_parity transducers=solid dynamo=animated anchor=animated')
 
 
+def choose_patch(ci: Path) -> tuple[bytes, str]:
+    full_payload = ci / 'full-refinement-pass.patch.gz.b64'
+    if full_payload.is_file():
+        try:
+            encoded = full_payload.read_text(encoding='ascii').strip().encode('ascii')
+            gzip_bytes = base64.b64decode(encoded, validate=True)
+            patch = recover_gzip_deflate(gzip_bytes)
+            recovered_sha = hashlib.sha256(patch).hexdigest()
+            print(f'VEILBOUND_0168_FULL_PATCH_DEFLATE recovered_bytes={len(patch)} sha256={recovered_sha}')
+            if recovered_sha == FULL_PATCH_RAW_SHA:
+                return patch, 'full_deflate_sha_verified'
+            print('VEILBOUND_0168_FULL_PATCH_DEFLATE=REJECT raw_sha_mismatch')
+        except Exception as exc:
+            print(f'VEILBOUND_0168_FULL_PATCH_DEFLATE=REJECT {type(exc).__name__}: {exc}')
+
+    recovery = ci / 'refinement-pass.patch.gz.b64'
+    if not recovery.is_file():
+        raise SystemExit('no usable refinement source patch payload')
+    pb64 = recovery.read_text(encoding='ascii').strip().encode('ascii')
+    if hashlib.sha256(pb64).hexdigest() != RECOVERY_PATCH_B64_SHA:
+        raise SystemExit('recovery refinement patch base64 sha mismatch')
+    patch = gzip.decompress(base64.b64decode(pb64, validate=True))
+    if hashlib.sha256(patch).hexdigest() != RECOVERY_PATCH_RAW_SHA:
+        raise SystemExit('recovery refinement patch raw sha mismatch')
+    return patch, 'earlier_sha_verified'
+
+
 def main():
     root = Path(sys.argv[1]).resolve()
     ci = Path(__file__).resolve().parent
-    patch_payload = ci / 'refinement-pass.patch.gz.b64'
     generator = ci / 'generate-full-refinement-assets.py'
-    if not patch_payload.is_file() or not generator.is_file():
-        raise SystemExit('missing 0.1.68 recovery payload/generator')
+    if not generator.is_file():
+        raise SystemExit('missing 0.1.68 deterministic asset generator')
 
-    pb64 = patch_payload.read_text(encoding='ascii').strip().encode('ascii')
-    if hashlib.sha256(pb64).hexdigest() != PATCH_B64_SHA:
-        raise SystemExit('recovery refinement patch base64 sha mismatch')
-    patch = gzip.decompress(base64.b64decode(pb64, validate=True))
-    if hashlib.sha256(patch).hexdigest() != PATCH_RAW_SHA:
-        raise SystemExit('recovery refinement patch raw sha mismatch')
-    print(f'VEILBOUND_0168_RECOVERY_PATCH=PASS bytes={len(patch)} sha256={PATCH_RAW_SHA}')
+    patch, patch_source = choose_patch(ci)
+    print(f'VEILBOUND_0168_RECOVERY_PATCH=PASS source={patch_source} bytes={len(patch)} sha256={hashlib.sha256(patch).hexdigest()}')
 
     patch_tmp = ci / '.refinement-0168-recovery.patch.tmp'
     patch_tmp.write_bytes(patch)
@@ -218,7 +272,7 @@ def main():
     elif 'mod_version=0.1.68-dev' not in text:
         raise SystemExit('unexpected Veilbound version while finalizing 0.1.68')
     props.write_text(text, encoding='utf-8')
-    print('VEILBOUND_0168_RECONSTRUCTION=PASS recovery_patch=verified deterministic_assets=PASS version=0.1.68-dev')
+    print(f'VEILBOUND_0168_RECONSTRUCTION=PASS patch={patch_source} deterministic_assets=PASS version=0.1.68-dev')
 
 
 if __name__ == '__main__':
