@@ -51,8 +51,16 @@ if not mode_switch.is_file():
     raise SystemExit('missing Veil Inventory mode switch pass')
 subprocess.run([sys.executable, str(mode_switch), str(root)], check=True)
 
+# Replace generic text X buttons with crisp pixel-drawn vanilla clear controls, and use the proper
+# 26.2 container tick hook instead of overriding final AbstractContainerScreen.tick().
+close_controls = ci / 'close-controls-finalize.py'
+if not close_controls.is_file():
+    raise SystemExit('missing Veil Inventory clear-control polish pass')
+subprocess.run([sys.executable, str(close_controls), str(root)], check=True)
+
 # Source-level architecture audit. A future reconstruction must fail instead of silently returning
-# to hand-painted fake player inventory slots, text mode buttons, or item-to-inventory crafting behavior.
+# to hand-painted fake player inventory slots, text mode buttons, generic text X buttons, or
+# item-to-inventory crafting behavior.
 java = root / 'src/main/java'
 terminal = (java / 'dev/futurae/veilbound/client/screen/VeilInventoryScreen.java').read_text(encoding='utf-8')
 menu = (java / 'dev/futurae/veilbound/menu/VeilInventoryMenu.java').read_text(encoding='utf-8')
@@ -73,6 +81,10 @@ required = {
     'mode switch segmented': ('MODE_SWITCH_WIDTH = MODE_SEGMENT * 2', terminal),
     'mode switch chest': ('new ItemStack(Items.CHEST)', terminal),
     'mode switch crafting table': ('new ItemStack(Items.CRAFTING_TABLE)', terminal),
+    'pixel clear controls': ('drawVanillaClearControl', terminal),
+    'search clear tooltip': ('Component.literal("Clear search")', terminal),
+    'recipe clear tooltip': ('Component.literal("Clear recipe")', terminal),
+    '26.2 container tick': ('protected void containerTick()', terminal),
     'transducer vanilla dimensions': ('super(menu, inventory, title, 176, 166)', transducer),
     'dynamo vanilla dimensions': ('super(menu, inventory, title, 176, 166)', dynamo),
     'transducer vanilla slot x': ('8 + column * 18', transducer_menu),
@@ -88,6 +100,10 @@ if 'renderPlayerInventory(' in terminal or 'handleContainerInput(' in terminal:
     raise SystemExit('manual/fake player inventory path survived terminal conversion')
 if 'Component.literal(mode == Mode.INVENTORY ? "Craft" : "Inv")' in terminal or 'private void toggleMode()' in terminal:
     raise SystemExit('old text/button mode toggle survived terminal conversion')
+if 'Button.builder(Component.literal("×")' in terminal:
+    raise SystemExit('old generic X button survived terminal conversion')
+if 'public void tick()' in terminal:
+    raise SystemExit('invalid final tick override survived terminal conversion')
 
 # Exact approved resource audit: all nine animated sheets are 16x128 and have animation metadata.
 assets = root / 'src/main/resources/assets/veilbound/textures'
@@ -114,5 +130,6 @@ for path in resource_paths:
 
 print('VEILBOUND_0167_VANILLA_GUI_FINAL=PASS terminal=real_container player_slots=vanilla cursor=vanilla crafting_result=carried_stack transducer=dynamo_layout machines=176x166')
 print('VEILBOUND_0167_MODE_SWITCH=PASS type=segmented inventory=vanilla_chest crafting=vanilla_crafting_table text_button=absent')
+print('VEILBOUND_0167_CLEAR_CONTROLS=PASS style=vanilla_bevel x=pixel_drawn hover=polished generic_text_button=absent')
 print('VEILBOUND_0167_AGREED_TEXTURES=PASS exact_payload=locked resources=9 frames=8 dimensions=16x128')
 print('VEILBOUND_0167_SLOW_TELEPORT=PASS swirl_in=1.25s black_cover=1.25s_server_delay swirl_out=1.25s')
