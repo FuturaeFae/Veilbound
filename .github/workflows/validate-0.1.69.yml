@@ -52,7 +52,7 @@ jobs:
           base64 -d ci-0169/veil169-text.patch.gz.b64 | gzip -dc > veil169-text.patch
           patch -p1 --batch -i "$GITHUB_WORKSPACE/veil169-text.patch" -d source-0169
 
-          base64 -d ci-0169/veil169-reference-assets.tar.gz.b64 > veil169-reference-assets.tar.gz
+          cat ci-0169/ref-assets-v2.part0* | base64 -d > veil169-reference-assets.tar.gz
           echo 'd4d6832d55ab959915a736a9c2539874feeb5eebb2572a166f4aa413613f5dab  veil169-reference-assets.tar.gz' | sha256sum -c -
           tar -xzf veil169-reference-assets.tar.gz -C source-0169
 
@@ -76,9 +76,8 @@ jobs:
           grep -q 'Dimensional Energy' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java"
           grep -q 'noOcclusion' "$ROOT/src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java"
           python3 - <<'PY'
-          import json
+          import json, struct
           from pathlib import Path
-          from PIL import Image
           root = Path('source-0169')
           for tier in ('dimensional','resonant','phase','causal'):
               p = root / f'src/main/resources/assets/veilbound/models/block/{tier}_transducer.json'
@@ -105,7 +104,10 @@ jobs:
           }
           tex = root / 'src/main/resources/assets/veilbound/textures'
           for rel, dims in expected.items():
-              assert Image.open(tex / rel).size == dims, (rel, Image.open(tex / rel).size)
+              raw = (tex / rel).read_bytes()
+              assert raw[:8] == b'\x89PNG\r\n\x1a\n', rel
+              got = struct.unpack('>II', raw[16:24])
+              assert got == dims, (rel, got, dims)
           print('VEILBOUND_0169_STATIC_AUDIT=PASS')
           PY
 
