@@ -18,8 +18,8 @@ patch_payload = ci / 'vanilla-gui-pass.patch.gz.b64'
 if not patch_payload.is_file():
     raise SystemExit('missing vanilla GUI patch payload')
 patch_b64 = patch_payload.read_text(encoding='ascii').strip().encode('ascii')
-if hashlib.sha256(patch_b64).hexdigest() != '5072a36744a78481e7dc13f4baa58022fa0480eec635ddbb16112ead88530695':
-    raise SystemExit('vanilla GUI patch payload sha256 mismatch')
+# Base64 transport can differ harmlessly in wrapping/terminal newline. Validate the decoded patch
+# itself, which is the authoritative byte stream applied to the reconstructed source.
 patch_raw = gzip.decompress(base64.b64decode(patch_b64))
 if hashlib.sha256(patch_raw).hexdigest() != '5eddbaf90da165f4eb235c4eea0b4102a3571b309fbd62d85e4117f763edcb29':
     raise SystemExit('decoded vanilla GUI patch sha256 mismatch')
