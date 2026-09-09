@@ -120,12 +120,12 @@ def run_gz_b64_script(name):
     finally:
         temp.unlink(missing_ok=True)
 
-# V2 travel starts the closing animation first, waits 12 server ticks, teleports under full black,
-# then sends the opening phase. It also removes the old radial/iris presentation entirely.
+# V2 travel starts the closing animation first, waits before teleporting under full black, then sends
+# the opening phase. The final vanilla-GUI pass below upgrades the timing to the approved 2.5 seconds.
 run_gz_b64_script('domain-transition-v2.py.gz.b64')
 
-# Re-install the approved resource identities at the very end so later UI/transition staging cannot
-# regress them to old placeholder art. This is the authoritative ore/item texture pass.
+# Install the generated material identities first; the final pass below then overwrites these with
+# the exact approved art payload so generated placeholders can never win in the packaged JAR.
 run_gz_b64_script('resource-texture-v2.py.gz.b64')
 
 # The binding animation is now the only success feedback; remove the historical success translation.
@@ -140,3 +140,10 @@ print(
 print('VEILBOUND_0167_TERMINAL_REFERENCE_UI=PASS slots=beveled grid=recessed scrollbar=integrated track_click=page_jump header=compact')
 print('VEILBOUND_0167_DOMAIN_TRANSITIONS=PASS travel=swirl_in_before_teleport_swirl_out radial=removed binding=singularity binding_text=none')
 print('VEILBOUND_0167_RESOURCE_TEXTURES=PASS ores=updated items=updated identities=dimensional_prismatic_resonant_crystal_phase_metal_causal_liquid')
+
+# Authoritative last pass: real vanilla player-container architecture, cursor-based terminal crafting,
+# standard machine inventory geometry, approved slow travel timing, and the exact accepted textures.
+vanilla_gui_finalize = ci / 'vanilla-gui-finalize.py'
+if not vanilla_gui_finalize.is_file():
+    raise SystemExit('missing final vanilla GUI pass')
+subprocess.run([sys.executable, str(vanilla_gui_finalize), str(root)], check=True)
