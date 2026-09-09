@@ -14,12 +14,12 @@ ci = Path(__file__).resolve().parent
 # Apply the architectural GUI pass after all historical source reconstruction. This converts the
 # Veil terminal to a real AbstractContainerScreen/Menu for the player's 36 vanilla slots, places
 # synthesis/crafting results on Minecraft's carried cursor stack, and normalizes machine screens.
-patch_payload = ci / 'vanilla-gui-pass.patch.gz.b64'
-if not patch_payload.is_file():
-    raise SystemExit('missing vanilla GUI patch payload')
-patch_b64 = patch_payload.read_text(encoding='ascii').strip().encode('ascii')
-# Base64 transport can differ harmlessly in wrapping/terminal newline. Validate the decoded patch
-# itself, which is the authoritative byte stream applied to the reconstructed source.
+patch_parts = [ci / f'vanilla-gui-pass.patch.gz.b64.part{i}' for i in range(2)]
+if not all(part.is_file() for part in patch_parts):
+    raise SystemExit('missing one or more exact vanilla GUI patch parts')
+patch_b64 = ''.join(part.read_text(encoding='ascii').strip() for part in patch_parts).encode('ascii')
+if hashlib.sha256(patch_b64).hexdigest() != '5072a36744a78481e7dc13f4baa58022fa0480eec635ddbb16112ead88530695':
+    raise SystemExit('exact vanilla GUI patch payload sha256 mismatch')
 patch_raw = gzip.decompress(base64.b64decode(patch_b64))
 if hashlib.sha256(patch_raw).hexdigest() != '5eddbaf90da165f4eb235c4eea0b4102a3571b309fbd62d85e4117f763edcb29':
     raise SystemExit('decoded vanilla GUI patch sha256 mismatch')
