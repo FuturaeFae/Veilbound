@@ -147,3 +147,10 @@ vanilla_gui_finalize = ci / 'vanilla-gui-finalize.py'
 if not vanilla_gui_finalize.is_file():
     raise SystemExit('missing final vanilla GUI pass')
 subprocess.run([sys.executable, str(vanilla_gui_finalize), str(root)], check=True)
+
+# Final dimensional ore correction: both host-rock variants use the exact same approved prismatic
+# crystal overlay. Only the vanilla stone/deepslate host texture differs between the two sheets.
+dimensional_ore_finalize = ci / 'dimensional-ore-finalize.py'
+if not dimensional_ore_finalize.is_file():
+    raise SystemExit('missing final dimensional ore overlay pass')
+subprocess.run([sys.executable, str(dimensional_ore_finalize), str(root)], check=True)
