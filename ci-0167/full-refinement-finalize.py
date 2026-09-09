@@ -21,7 +21,7 @@ try:
 finally:
     tmp.unlink(missing_ok=True)
 
-parts=[ci/f'full-refinement-assets.tar.gz.b64.part{i}' for i in range(4)]
+parts=[ci/f'full-refinement-assets.tar.gz.b64.part{i:02d}' for i in range(17)]
 if not all(p.is_file() for p in parts): raise SystemExit('missing full refinement asset payload part')
 ab64=''.join(p.read_text(encoding='ascii').strip() for p in parts).encode('ascii')
 if hashlib.sha256(ab64).hexdigest()!=ASSET_B64_SHA: raise SystemExit('full refinement assets base64 sha mismatch')
@@ -30,6 +30,7 @@ if hashlib.sha256(archive).hexdigest()!=ASSET_RAW_SHA: raise SystemExit('full re
 with tarfile.open(fileobj=io.BytesIO(archive),mode='r:gz') as tf:
     tf.extractall(root)
 
+# Superseded one-face resources are intentionally gone.
 (root/'src/main/resources/assets/veilbound/textures/block/boundary_dynamo.png').unlink(missing_ok=True)
 (root/'src/main/resources/assets/veilbound/textures/block/void_anchor.png').unlink(missing_ok=True)
 
@@ -76,6 +77,7 @@ if lang.get('block.veilbound.boundary_dynamo')!='Dynamo' or lang.get('container.
 if lang.get('screen.veilbound.veil_inventory.search_hint')!='Search':
     raise SystemExit('Veil search hint did not shorten')
 
+# Minimal RGBA PNG reader for exact dimension/alpha/mask audits without external packages.
 def decode_rgba(path:Path):
     data=path.read_bytes()
     if data[:8]!=b'\x89PNG\r\n\x1a\n': raise SystemExit(f'not PNG: {path}')
@@ -105,6 +107,7 @@ def decode_rgba(path:Path):
         rows.append(bytes(out)); prev=out
     return width,height,rows
 
+# Every native item sprite is doubled to 32px and remains an 8-frame sheet.
 for p in sorted((res/'textures/item').glob('*.png')):
     w,h,_=decode_rgba(p)
     if w!=32 or h%32!=0 or h<32:
@@ -113,6 +116,7 @@ for name in ('dimensional_shard','resonant_crystal','phase_mote','causal_fragmen
     w,h,_=decode_rgba(res/f'textures/item/{name}.png')
     if (w,h)!=(32,256): raise SystemExit(f'animated item wrong size: {name} {w}x{h}')
 
+# No block texture may contain a transparent pixel; all current block textures are native 32px.
 for p in sorted((res/'textures/block').glob('*.png')):
     w,h,rows=decode_rgba(p)
     if w!=32 or h%32!=0: raise SystemExit(f'block texture not native 32px: {p.name} {w}x{h}')
@@ -130,6 +134,7 @@ w,h,_=decode_rgba(res/'textures/block/dynamo_front.png')
 if (w,h)!=(32,128) or not (res/'textures/block/dynamo_front.png.mcmeta').is_file():
     raise SystemExit('Dynamo animated furnace front invalid')
 
+# Stone and deepslate must carry the same prismatic resource silhouette. Compare colorful masks frame-by-frame.
 def colorful_mask(rows,w,h):
     masks=[]
     for row in rows:
@@ -142,9 +147,11 @@ def colorful_mask(rows,w,h):
 sw,sh,srows=decode_rgba(res/'textures/block/dimensional_shard_ore.png')
 dw,dh,drows=decode_rgba(res/'textures/block/deepslate_dimensional_shard_ore.png')
 if (sw,sh)!=(dw,dh): raise SystemExit('dimensional ore variants size mismatch')
-if colorful_mask(srows,sw,sh)!=colorful_mask(drows,dw,dh):
-    raise SystemExit('stone/deepslate dimensional ore overlay silhouette diverged')
+sm=colorful_mask(srows,sw,sh); dm=colorful_mask(drows,dw,dh)
+# host rock is grayscale; any colorful mask difference means the ore overlay itself diverged.
+if sm!=dm: raise SystemExit('stone/deepslate dimensional ore overlay silhouette diverged')
 
+# Transducers must occupy the full 16^3 block volume with no gaps and must not protrude into an adjacent block.
 for tier in ('dimensional','resonant','phase','causal'):
     model=json.loads((res/f'models/block/{tier}_transducer.json').read_text(encoding='utf-8'))
     elems=model.get('elements',[])
