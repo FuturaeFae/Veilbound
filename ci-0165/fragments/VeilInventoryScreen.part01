@@ -1,0 +1,194 @@
+                    addRenderableWidget(Button.builder(Component.literal(""), button -> playerSlotClicked(invSlot))
+                            .bounds(x, y, SLOT, SLOT).build());
+                }
+            }
+            for (int col = 0; col < 9; col++) {
+                final int invSlot = col;
+                int x = gridLeft() + col * SLOT;
+                int y = hotbarTop();
+                addRenderableWidget(Button.builder(Component.literal(""), button -> playerSlotClicked(invSlot))
+                        .bounds(x, y, SLOT, SLOT).build());
+            }
+        }
+
+        if (mode == Mode.CRAFTING) initCraftingSide();
+    }
+
+    private void initCraftingSide() {
+        int side = sideLeft();
+        int top = sideTop();
+
+        addRenderableWidget(Button.builder(Component.literal("×"), button -> clearSelectedRecipe(true))
+                .bounds(side + 50, top + 4, 14, 14).build());
+
+        for (int i = 0; i < VeilCraftingRequestPayload.GRID_SIZE; i++) {
+            final int cell = i;
+            Button button = Button.builder(Component.literal(""), ignored -> craftingCellClicked(cell))
+                    .bounds(side + 7 + (i % 3) * SLOT, top + 22 + (i / 3) * SLOT, SLOT, SLOT).build();
+            button.active = selectedRecipe < 0;
+            addRenderableWidget(button);
+        }
+
+        Button output = Button.builder(Component.literal(""), button -> {
+                    if (!craftingPreview.craftable()) return;
+                    sendCraft(minecraft != null && minecraft.hasShiftDown()
+                            ? VeilCraftingRequestPayload.Action.CRAFT_MAX
+                            : VeilCraftingRequestPayload.Action.CRAFT_ONCE);
+                })
+                .bounds(side + 25, top + 84, SLOT, SLOT).build();
+        output.active = craftingPreview.craftable();
+        addRenderableWidget(output);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (searchDebounce > 0 && --searchDebounce == 0) {
+            if (mode == Mode.INVENTORY) requestInventory(0);
+            else {
+                clearSelectedRecipe(false);
+                requestCraftables(0);
+            }
+        }
+    }
+
+    private void toggleMode() {
+        mode = mode == Mode.INVENTORY ? Mode.CRAFTING : Mode.INVENTORY;
+        searchDebounce = 0;
+        if (mode == Mode.CRAFTING) {
+            clearSelectedRecipe(false);
+            requestCraftables(0);
+        } else {
+            clearSelectedRecipe(false);
+            requestInventory(0);
+        }
+        rebuildWidgets();
+    }
+
+    private void clearSearch() {
+        if (mode == Mode.INVENTORY) inventoryQuery = "";
+        else craftingQuery = "";
+        if (searchBox != null) searchBox.setValue("");
+        searchDebounce = 0;
+        if (mode == Mode.INVENTORY) requestInventory(0);
+        else {
+            clearSelectedRecipe(false);
+            requestCraftables(0);
+        }
+    }
+
+    private void cycleSort() {
+        MatterPatternPageService.SortMode[] values = MatterPatternPageService.SortMode.values();
+        if (mode == Mode.INVENTORY) inventorySort = values[(inventorySort.ordinal() + 1) % values.length];
+        else craftingSort = values[(craftingSort.ordinal() + 1) % values.length];
+        if (mode == Mode.INVENTORY) requestInventory(0);
+        else {
+            clearSelectedRecipe(false);
+            requestCraftables(0);
+        }
+        rebuildWidgets();
+    }
+
+    private void changePage(int delta) {
+        int page = Math.max(0, Math.min(activePageCount() - 1, activePage() + delta));
+        if (page == activePage()) return;
+        if (mode == Mode.INVENTORY) requestInventory(page);
+        else {
+            clearSelectedRecipe(false);
+            requestCraftables(page);
+        }
+    }
+
+    private void withdraw(ItemResource resource) {
+        if (resource == null || resource.isEmpty()) return;
+        sendInventory(VeilInventoryActionPayload.Action.WITHDRAW_STACK, snapshot.page(), resource);
+    }
+
+    private void playerSlotClicked(int slot) {
+        if (minecraft == null || minecraft.player == null) return;
+        ItemStack stack = minecraft.player.getInventory().getItem(slot);
+        if (stack == null || stack.isEmpty()) return;
+        ItemResource resource = ItemResource.of(stack);
+        if (mode == Mode.INVENTORY) {
+            sendInventory(VeilInventoryActionPayload.Action.DEPOSIT_RESOURCE_STACK, snapshot.page(), resource);
+            return;
+        }
+        if (selectedRecipe < 0) setManualIngredient(resource);
+    }
+
+    private void selectRecipe(int index) {
+        if (index < 0 || index >= craftables.entries().size()) return;
+        var entry = craftables.entries().get(index);
+        selectedRecipe = index;
+        selectedRecipeResult = entry.result();
+        for (int i = 0; i < craftingGrid.size(); i++) craftingGrid.set(i, entry.grid().get(i));
+        requestPreview();
+        rebuildWidgets();
+    }
+
+    private void clearSelectedRecipe(boolean refreshPreview) {
+        selectedRecipe = -1;
+        selectedRecipeResult = ItemResource.EMPTY;
+        for (int i = 0; i < craftingGrid.size(); i++) craftingGrid.set(i, ItemResource.EMPTY);
+        activeManualCell = 0;
+        craftingPreview = VeilCraftingPreviewPayload.denied("empty_grid");
+        if (refreshPreview) requestPreview();
+        if (minecraft != null) rebuildWidgets();
+    }
+
+    private void craftingCellClicked(int cell) {
+        if (selectedRecipe >= 0 || cell < 0 || cell >= craftingGrid.size()) return;
+        if (!craftingGrid.get(cell).isEmpty()) {
+            craftingGrid.set(cell, ItemResource.EMPTY);
+            activeManualCell = cell;
+            requestPreview();
+            rebuildWidgets();
+            return;
+        }
+        activeManualCell = cell;
+        rebuildWidgets();
+    }
+
+    private void setManualIngredient(ItemResource resource) {
+        if (selectedRecipe >= 0 || resource == null || resource.isEmpty()) return;
+        int target = activeManualCell;
+        if (target < 0 || target >= craftingGrid.size()) target = firstEmptyCraftingCell();
+        if (target < 0) target = 0;
+        craftingGrid.set(target, resource);
+        activeManualCell = firstEmptyCraftingCell();
+        requestPreview();
+        rebuildWidgets();
+    }
+
+    private int firstEmptyCraftingCell() {
+        for (int i = 0; i < craftingGrid.size(); i++) if (craftingGrid.get(i).isEmpty()) return i;
+        return -1;
+    }
+
+    private void requestPreview() {
+        sendCraft(VeilCraftingRequestPayload.Action.PREVIEW);
+    }
+
+    private void sendCraft(VeilCraftingRequestPayload.Action action) {
+        ClientPacketDistributor.sendToServer(new VeilCraftingRequestPayload(
+                action, craftables.page(), 1, List.copyOf(craftingGrid)));
+    }
+
+    private void requestInventory(int page) {
+        ClientPacketDistributor.sendToServer(new VeilInventoryActionPayload(
+                VeilInventoryActionPayload.Action.OPEN_OR_PAGE, Math.max(0, page), ItemResource.EMPTY, 1,
+                inventoryQuery, inventorySort, MatterPatternPageService.FilterMode.ALL));
+    }
+
+    private void sendInventory(VeilInventoryActionPayload.Action action, int page, ItemResource resource) {
+        ClientPacketDistributor.sendToServer(new VeilInventoryActionPayload(
+                action, Math.max(0, page), resource, 64,
+                inventoryQuery, inventorySort, MatterPatternPageService.FilterMode.ALL));
+    }
+
+    private void requestCraftables(int page) {
+        ClientPacketDistributor.sendToServer(new VeilCraftablesRequestPayload(
+                true, Math.max(0, page), craftingQuery, craftingSort));
+    }
+
+    private String activeQuery() { return mode == Mode.INVENTORY ? inventoryQuery : craftingQuery; }

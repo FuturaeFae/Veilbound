@@ -1,0 +1,373 @@
+--- a/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java
++++ b/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java
+@@ -15,8 +15,10 @@
+ import net.minecraft.client.gui.components.Button;
+ import net.minecraft.client.gui.components.EditBox;
+ import net.minecraft.client.gui.screens.Screen;
++import net.minecraft.client.input.MouseButtonEvent;
+ import net.minecraft.network.chat.Component;
+ import net.minecraft.world.item.ItemStack;
++import net.minecraft.world.inventory.ContainerInput;
+ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
+ import net.neoforged.neoforge.transfer.item.ItemResource;
+ 
+@@ -123,24 +125,8 @@
+ 
+         if (!snapshot.allowed()) return;
+ 
+-        // Main terminal/result grid.
+-        if (mode == Mode.INVENTORY) {
+-            for (int i = 0; i < Math.min(GRID_CAPACITY, snapshot.entries().size()); i++) {
+-                ItemResource resource = snapshot.entries().get(i).resource();
+-                int x = gridLeft() + (i % GRID_COLUMNS) * SLOT;
+-                int y = gridTop() + (i / GRID_COLUMNS) * SLOT;
+-                addRenderableWidget(Button.builder(Component.literal(""), button -> withdraw(resource))
+-                        .bounds(x, y, SLOT, SLOT).build());
+-            }
+-        } else {
+-            for (int i = 0; i < Math.min(GRID_CAPACITY, craftables.entries().size()); i++) {
+-                final int recipeIndex = i;
+-                int x = gridLeft() + (i % GRID_COLUMNS) * SLOT;
+-                int y = gridTop() + (i / GRID_COLUMNS) * SLOT;
+-                addRenderableWidget(Button.builder(Component.literal(""), button -> selectRecipe(recipeIndex))
+-                        .bounds(x, y, SLOT, SLOT).build());
+-            }
+-        }
++        // Storage/result cells are virtual terminal slots, not GUI buttons. Their click handling is
++        // performed in mouseClicked so they never acquire button visuals or movable-slot semantics.
+ 
+         Button previous = Button.builder(Component.literal("▲"), button -> changePage(-1))
+                 .bounds(scrollLeft(), gridTop(), 14, 14).build();
+@@ -151,26 +137,8 @@
+         next.active = activePage() + 1 < activePageCount();
+         addRenderableWidget(next);
+ 
+-        // Player inventory/hotbar. Clicking a stack deposits in Inventory mode; in manual Crafting
+-        // mode it becomes the selected ghost ingredient.
+-        if (minecraft != null && minecraft.player != null) {
+-            for (int row = 0; row < 3; row++) {
+-                for (int col = 0; col < 9; col++) {
+-                    final int invSlot = 9 + row * 9 + col;
+-                    int x = gridLeft() + col * SLOT;
+-                    int y = playerGridTop() + row * SLOT;
+-                    addRenderableWidget(Button.builder(Component.literal(""), button -> playerSlotClicked(invSlot))
+-                            .bounds(x, y, SLOT, SLOT).build());
+-                }
+-            }
+-            for (int col = 0; col < 9; col++) {
+-                final int invSlot = col;
+-                int x = gridLeft() + col * SLOT;
+-                int y = hotbarTop();
+-                addRenderableWidget(Button.builder(Component.literal(""), button -> playerSlotClicked(invSlot))
+-                        .bounds(x, y, SLOT, SLOT).build());
+-            }
+-        }
++        // The lower inventory is intentionally not represented by Buttons. Normal clicks are routed
++        // through Minecraft's player inventory menu so pickup/split/merge/double-click behavior stays vanilla.
+ 
+         if (mode == Mode.CRAFTING) initCraftingSide();
+     }
+@@ -182,23 +150,8 @@
+         addRenderableWidget(Button.builder(Component.literal("×"), button -> clearSelectedRecipe(true))
+                 .bounds(side + 50, top + 4, 14, 14).build());
+ 
+-        for (int i = 0; i < VeilCraftingRequestPayload.GRID_SIZE; i++) {
+-            final int cell = i;
+-            Button button = Button.builder(Component.literal(""), ignored -> craftingCellClicked(cell))
+-                    .bounds(side + 7 + (i % 3) * SLOT, top + 22 + (i / 3) * SLOT, SLOT, SLOT).build();
+-            button.active = selectedRecipe < 0;
+-            addRenderableWidget(button);
+-        }
+-
+-        Button output = Button.builder(Component.literal(""), button -> {
+-                    if (!craftingPreview.craftable()) return;
+-                    sendCraft(minecraft != null && minecraft.hasShiftDown()
+-                            ? VeilCraftingRequestPayload.Action.CRAFT_MAX
+-                            : VeilCraftingRequestPayload.Action.CRAFT_ONCE);
+-                })
+-                .bounds(side + 25, top + 84, SLOT, SLOT).build();
+-        output.active = craftingPreview.craftable();
+-        addRenderableWidget(output);
++        // Crafting-grid and output cells are slot-shaped controls rather than Buttons and are handled
++        // directly in mouseClicked. Only the explicit clear control above is a GUI button.
+     }
+ 
+     @Override
+@@ -260,21 +213,129 @@
+         }
+     }
+ 
+-    private void withdraw(ItemResource resource) {
++    private void withdraw(ItemResource resource, boolean single) {
+         if (resource == null || resource.isEmpty()) return;
+-        sendInventory(VeilInventoryActionPayload.Action.WITHDRAW_STACK, snapshot.page(), resource);
++        sendInventory(single ? VeilInventoryActionPayload.Action.WITHDRAW_ONE
++                : VeilInventoryActionPayload.Action.WITHDRAW_STACK, snapshot.page(), resource);
+     }
+ 
+-    private void playerSlotClicked(int slot) {
+-        if (minecraft == null || minecraft.player == null) return;
+-        ItemStack stack = minecraft.player.getInventory().getItem(slot);
+-        if (stack == null || stack.isEmpty()) return;
+-        ItemResource resource = ItemResource.of(stack);
+-        if (mode == Mode.INVENTORY) {
+-            sendInventory(VeilInventoryActionPayload.Action.DEPOSIT_RESOURCE_STACK, snapshot.page(), resource);
+-            return;
++    private boolean handlePlayerInventoryClick(int inventorySlot, MouseButtonEvent event, boolean doubleClick) {
++        if (minecraft == null || minecraft.player == null || minecraft.gameMode == null) return false;
++        if (inventorySlot < 0 || inventorySlot >= 36) return false;
++        ItemStack stack = minecraft.player.getInventory().getItem(inventorySlot);
++
++        // In a storage terminal, shift-click is the quick-transfer gesture between the player and the
++        // remote storage. Normal clicks remain vanilla player-inventory clicks.
++        if (event.hasShiftDown() && !stack.isEmpty()) {
++            ItemResource resource = ItemResource.of(stack);
++            if (mode == Mode.INVENTORY) {
++                sendInventory(event.button() == 1
++                                ? VeilInventoryActionPayload.Action.DEPOSIT_RESOURCE_ONE
++                                : VeilInventoryActionPayload.Action.DEPOSIT_RESOURCE_STACK,
++                        snapshot.page(), resource);
++                return true;
++            }
++            if (selectedRecipe < 0 && event.button() == 0) {
++                setManualIngredient(resource);
++                return true;
++            }
+         }
+-        if (selectedRecipe < 0) setManualIngredient(resource);
++
++        // Veil Inventory is a custom Screen, but the player's own inventory menu remains active.
++        // Forward the click through MultiPlayerGameMode so vanilla performs and synchronizes the
++        // pickup/split/merge/double-click operation rather than turning these cells into ad-hoc buttons.
++        int menuSlot = playerInventoryMenuSlot(inventorySlot);
++        if (menuSlot < 0) return false;
++        ContainerInput input = doubleClick && event.button() == 0
++                ? ContainerInput.PICKUP_ALL : ContainerInput.PICKUP;
++        minecraft.gameMode.handleContainerInput(
++                minecraft.player.containerMenu.containerId, menuSlot, event.button(), input, minecraft.player);
++        return true;
++    }
++
++    private static int playerInventoryMenuSlot(int inventorySlot) {
++        if (inventorySlot >= 0 && inventorySlot < 9) return 36 + inventorySlot;
++        if (inventorySlot >= 9 && inventorySlot < 36) return inventorySlot;
++        return -1;
++    }
++
++    @Override
++    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
++        // Explicit widgets (search, sort, mode, clear, paging) get first chance at the event.
++        if (super.mouseClicked(event, doubleClick)) return true;
++        if (!snapshot.allowed()) return false;
++
++        int mouseX = (int) event.x();
++        int mouseY = (int) event.y();
++
++        // Storage/result grid: virtual withdrawal/selection cells, never rearrangeable slots.
++        int gridCell = gridCellAt(mouseX, mouseY);
++        if (gridCell >= 0) {
++            if (mode == Mode.INVENTORY) {
++                // The storage grid is a withdrawal browser, not a second movable inventory. Do not
++                // reinterpret a click while the player is already carrying a vanilla inventory stack.
++                if (!carriedStack().isEmpty()) return true;
++                if (gridCell < snapshot.entries().size() && (event.button() == 0 || event.button() == 1)) {
++                    withdraw(snapshot.entries().get(gridCell).resource(), event.button() == 1);
++                    return true;
++                }
++            } else if (gridCell < craftables.entries().size() && event.button() == 0) {
++                selectRecipe(gridCell);
++                return true;
++            }
++        }
++
++        int inventorySlot = playerInventorySlotAt(mouseX, mouseY);
++        if (inventorySlot >= 0 && (event.button() == 0 || event.button() == 1)) {
++            return handlePlayerInventoryClick(inventorySlot, event, doubleClick);
++        }
++
++        if (mode == Mode.CRAFTING) {
++            int cell = craftingCellAt(mouseX, mouseY);
++            if (cell >= 0 && event.button() == 0) {
++                craftingCellClicked(cell);
++                return true;
++            }
++            int side = sideLeft();
++            int top = sideTop();
++            if (inside(mouseX, mouseY, side + 25, top + 84, SLOT, SLOT) && event.button() == 0) {
++                if (craftingPreview.craftable()) {
++                    sendCraft(event.hasShiftDown()
++                            ? VeilCraftingRequestPayload.Action.CRAFT_MAX
++                            : VeilCraftingRequestPayload.Action.CRAFT_ONCE);
++                }
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private int gridCellAt(int mouseX, int mouseY) {
++        if (!inside(mouseX, mouseY, gridLeft(), gridTop(), GRID_COLUMNS * SLOT, GRID_ROWS * SLOT)) return -1;
++        int col = (mouseX - gridLeft()) / SLOT;
++        int row = (mouseY - gridTop()) / SLOT;
++        return row * GRID_COLUMNS + col;
++    }
++
++    private int playerInventorySlotAt(int mouseX, int mouseY) {
++        if (inside(mouseX, mouseY, gridLeft(), playerGridTop(), 9 * SLOT, 3 * SLOT)) {
++            int col = (mouseX - gridLeft()) / SLOT;
++            int row = (mouseY - playerGridTop()) / SLOT;
++            return 9 + row * 9 + col;
++        }
++        if (inside(mouseX, mouseY, gridLeft(), hotbarTop(), 9 * SLOT, SLOT)) {
++            return (mouseX - gridLeft()) / SLOT;
++        }
++        return -1;
++    }
++
++    private int craftingCellAt(int mouseX, int mouseY) {
++        int side = sideLeft();
++        int top = sideTop();
++        int x = side + 7;
++        int y = top + 22;
++        if (!inside(mouseX, mouseY, x, y, 3 * SLOT, 3 * SLOT)) return -1;
++        return ((mouseY - y) / SLOT) * 3 + ((mouseX - x) / SLOT);
+     }
+ 
+     private void selectRecipe(int index) {
+@@ -377,7 +438,6 @@
+ 
+     @Override
+     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+-        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+         int left = panelLeft();
+         int top = panelTop();
+ 
+@@ -391,6 +451,8 @@
+             graphics.centeredText(font,
+                     Component.translatable("screen.veilbound.veil_inventory.locked", snapshot.reason()),
+                     left + PANEL_WIDTH / 2, top + 100, 0xFFAA0000);
++            super.extractRenderState(graphics, mouseX, mouseY, partialTick);
++            renderCarriedStack(graphics, mouseX, mouseY);
+             return;
+         }
+ 
+@@ -403,6 +465,11 @@
+         renderPlayerInventory(graphics, mouseX, mouseY);
+ 
+         if (mode == Mode.CRAFTING) renderCraftingSide(graphics, mouseX, mouseY);
++
++        // Widgets must be extracted after the custom panel/content. The old order rendered the gray
++        // panel over every Button/EditBox, which is why the top controls were present but invisible.
++        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
++        renderCarriedStack(graphics, mouseX, mouseY);
+     }
+ 
+     private void renderInventoryGrid(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+@@ -414,20 +481,17 @@
+             var entry = snapshot.entries().get(i);
+             ItemStack stack = entry.resource().toStack(1);
+             graphics.item(stack, x + 1, y + 1);
++            graphics.itemDecorations(font, stack, x + 1, y + 1);
+             // Matter patterns are identities backed by the shared Matter pool, so deliberately do
+             // not draw a quantity. Exact unvalued stored stacks do show their real count.
+             if (entry.matterCost() <= 0 && entry.storedCount() > 1) {
+                 drawCount(graphics, entry.storedCount(), x, y);
+             }
+             if (inside(mouseX, mouseY, x, y, SLOT, SLOT)) {
+-                Component tip = entry.matterCost() > 0
+-                        ? Component.literal(entry.resource().getHoverName().getString()
+-                                + "\nMatter: " + NUMBERS.format(entry.matterCost())
+-                                + "\nClick: withdraw up to a stack")
+-                        : Component.literal(entry.resource().getHoverName().getString()
+-                                + "\nStored: " + NUMBERS.format(entry.storedCount())
+-                                + "\nClick: withdraw up to a stack");
+-                graphics.setTooltipForNextFrame(font, tip, mouseX, mouseY);
++                graphics.fill(x + 2, y + 2, x + SLOT - 1, y + SLOT - 1, 0x55FFFFFF);
++                // Use Minecraft's real item tooltip path so enchantments, attributes, components,
++                // advanced details, and Veilbound's global Matter tooltip line match the item everywhere else.
++                if (carriedStack().isEmpty()) graphics.setTooltipForNextFrame(font, stack, mouseX, mouseY);
+             }
+         }
+     }
+@@ -473,19 +537,34 @@
+ 
+     private void renderPlayerSlot(GuiGraphicsExtractor graphics, int slot, int x, int y, int mouseX, int mouseY) {
+         drawSlot(graphics, x, y);
++        boolean hovered = inside(mouseX, mouseY, x, y, SLOT, SLOT);
++        if (hovered) graphics.fill(x + 2, y + 2, x + SLOT - 1, y + SLOT - 1, 0x55FFFFFF);
++
+         ItemStack stack = minecraft.player.getInventory().getItem(slot);
+         if (stack == null || stack.isEmpty()) return;
+         graphics.item(stack, x + 1, y + 1);
+-        if (stack.getCount() > 1) drawCount(graphics, stack.getCount(), x, y);
+-        if (inside(mouseX, mouseY, x, y, SLOT, SLOT)) {
+-            String action = mode == Mode.INVENTORY
+-                    ? "Click: deposit stack"
+-                    : selectedRecipe < 0 ? "Click: use as manual ingredient" : "Player inventory";
+-            graphics.setTooltipForNextFrame(font,
+-                    Component.literal(stack.getHoverName().getString() + "\n" + action), mouseX, mouseY);
++        graphics.itemDecorations(font, stack, x + 1, y + 1);
++        if (hovered && carriedStack().isEmpty()) {
++            graphics.setTooltipForNextFrame(font, stack, mouseX, mouseY);
+         }
+     }
+ 
++    private ItemStack carriedStack() {
++        if (minecraft == null || minecraft.player == null || minecraft.player.containerMenu == null) return ItemStack.EMPTY;
++        ItemStack carried = minecraft.player.containerMenu.getCarried();
++        return carried == null ? ItemStack.EMPTY : carried;
++    }
++
++    private void renderCarriedStack(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
++        ItemStack carried = carriedStack();
++        if (carried.isEmpty()) return;
++        graphics.nextStratum();
++        int x = mouseX - 8;
++        int y = mouseY - 8;
++        graphics.item(carried, x, y);
++        graphics.itemDecorations(font, carried, x, y);
++    }
++
+     private void renderScrollBar(GuiGraphicsExtractor graphics) {
+         int x = scrollLeft();
+         int y = gridTop();
+--- a/src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java
++++ b/src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java
+@@ -90,7 +90,6 @@
+     }
+ 
+     @Override public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+-        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+         int left = Math.max(8, width / 2 - PANEL_WIDTH / 2);
+         int top = Math.max(8, height / 2 - PANEL_HEIGHT / 2);
+         // Vanilla-container-inspired gray frame and inset work area.
+@@ -103,6 +102,7 @@
+ 
+         if (!snapshot.allowed()) {
+             graphics.centeredText(font, Component.literal("Core controls unavailable: " + snapshot.reason()), width / 2, top + 120, 0xFFAA0000);
++            super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+             return;
+         }
+         if (!"ok".equals(snapshot.reason())) {
+@@ -113,6 +113,9 @@
+             case ENVIRONMENT -> renderOptionsHeader(graphics, left, top, "Global Environment");
+             case AXIOMS -> renderOptionsHeader(graphics, left, top, "Global Axioms");
+         }
++        // Draw actual widgets last. Previously the gray Core panel was extracted after them and
++        // completely covered the tabs, expansion toggle, and six direction buttons.
++        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+     }
+ 
+     private void renderCore(GuiGraphicsExtractor graphics, int left, int top) {
+--- a/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java
++++ b/src/main/java/dev/futurae/veilbound/block/EngineeringMonumentCollisionState.java
+@@ -57,7 +57,8 @@
+                         localBoxes = EngineeringMonumentBlock.collisionBoxes(state);
+                     } else if (state.getBlock() == VeilboundBlocks.DIMENSIONAL_CORE.get()) {
+                         localBoxes = DimensionalCoreBlock.collisionBoxes(level);
+-                    } else if (state.getBlock() == VeilboundBlocks.VEIL_LANCE.get()) {
++                    } else if (VeilboundBlocks.VEIL_LANCE != null
++                            && state.getBlock() == VeilboundBlocks.VEIL_LANCE.get()) {
+                         localBoxes = VeilLanceBlock.collisionBoxes(state);
+                     } else {
+                         continue;

@@ -1,0 +1,160 @@
+name: Validate Veilbound 0.1.67
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0167:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact validated 0.1.66 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.66-dev-final
+          path: baseline-0166
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34188257046
+
+      - name: Reconstruct 0.1.67 crystalline Core pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "97abce24b35946a28749fde62f9e23e0bfd5d96e9d162dcb612657bbfca2ce1a  baseline-0166/Veilbound-0.1.66-dev-source.tar.xz" | sha256sum -c -
+          mkdir -p source-0167
+          tar -xJf baseline-0166/Veilbound-0.1.66-dev-source.tar.xz -C source-0167
+          python3 ci-0167/apply-0167.py source-0167
+
+      - name: Audit physical crystalline Core source and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=source-0167
+          grep -q '^mod_version=0.1.67-dev$' "$ROOT/gradle.properties"
+          grep -q 'DimensionalCoreRenderPipelines::register' "$ROOT/src/main/java/dev/futurae/veilbound/client/VeilboundClient.java"
+          grep -q 'case NASCENT -> new Stage(0.27D, 0.78D' "$ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java"
+          grep -q 'case TRANSCENDENT -> new Stage(0.11D, 3.02D' "$ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java"
+          grep -q 'same geometry and exact same material path' "$ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java"
+          ! grep -q 'EngineeringMonumentRenderPipelines' "$ROOT/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderer.java"
+          grep -q 'float fracture' "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.fsh"
+          grep -q 'vec3 prism' "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.fsh"
+          grep -q 'float fbm' "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.fsh"
+          grep -q 'coreBox(0.39, 0.27' "$ROOT/src/main/java/dev/futurae/veilbound/block/DimensionalCoreBlock.java"
+          grep -q 'coreBox(0.30, 0.11' "$ROOT/src/main/java/dev/futurae/veilbound/block/DimensionalCoreBlock.java"
+          grep -q 'VEILBOUND_0167_CORE_VISUAL_SELF_TEST' "$ROOT/build.gradle"
+          test -s "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.vsh"
+          test -s "$ROOT/src/main/resources/assets/veilbound/shaders/core/dimensional_core.fsh"
+          echo VEILBOUND_0167_CORE_AUDIT=PASS
+
+      - name: Package 0.1.67 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0167 -cJf Veilbound-0.1.67-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./run' .
+          test -s Veilbound-0.1.67-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0167.log") 2>&1
+          set -euo pipefail
+          cd source-0167
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.67-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.67-dev.jar
+          for entry in \
+            dev/futurae/veilbound/client/render/DimensionalCoreRenderer.class \
+            dev/futurae/veilbound/client/render/DimensionalCoreRenderPipelines.class \
+            dev/futurae/veilbound/block/DimensionalCoreBlock.class \
+            assets/veilbound/shaders/core/dimensional_core.vsh \
+            assets/veilbound/shaders/core/dimensional_core.fsh; do
+              unzip -Z1 Veilbound-0.1.67-dev.jar | grep -q "$entry"
+          done
+          RECIPES="$(unzip -Z1 Veilbound-0.1.67-dev.jar | grep -c '^data/veilbound/recipe/.*\.json$')"
+          test "$RECIPES" -eq 7
+          echo "VEILBOUND_0167_JAR_AUDIT=PASS recipes=$RECIPES floating_crystal_core=present physical_fragments=present procedural_prismatic_material=present" | tee Veilbound-0.1.67-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0167.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0167"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.67-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.67 CI smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.67-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then SMOKE_OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$SMOKE_OK" -ne 1 ]; then tail -n 250 "$LOG" || true; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0167_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.67-dev.jar Veilbound-0.1.67-dev-source.tar.xz Veilbound-0.1.67-dev-server-smoke.log > Veilbound-0.1.67-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.67-dev-diagnostics
+          path: |
+            03-gradle-build-0167.log
+            04-server-setup-0167.log
+            Veilbound-0.1.67-dev.jar
+            Veilbound-0.1.67-dev-source.tar.xz
+            Veilbound-0.1.67-dev-audit.txt
+            Veilbound-0.1.67-dev-SHA256SUMS.txt
+            Veilbound-0.1.67-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.67-dev-final
+          path: |
+            Veilbound-0.1.67-dev.jar
+            Veilbound-0.1.67-dev-source.tar.xz
+            Veilbound-0.1.67-dev-audit.txt
+            Veilbound-0.1.67-dev-SHA256SUMS.txt
+            Veilbound-0.1.67-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

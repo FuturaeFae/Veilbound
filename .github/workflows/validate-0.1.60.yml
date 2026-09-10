@@ -1,0 +1,182 @@
+name: Validate Veilbound 0.1.60
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0160:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact 0.1.59 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.59-dev-final
+          path: baseline-0159
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34082792385
+
+      - name: Reconstruct 0.1.60 Breach fauna pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "db2f2c58861d766fe292b2c0ee157fb11dc339bb10bda9350da987b2e285b5d5  baseline-0159/Veilbound-0.1.59-dev-source.tar.xz" | sha256sum -c -
+          test -s ci-0160/apply-0160.py
+          test -s ci-0160/BreachCombatPolicy.java
+          mkdir -p source-0160
+          tar -xJf baseline-0159/Veilbound-0.1.59-dev-source.tar.xz -C source-0160
+          python3 ci-0160/apply-0160.py source-0160
+          grep -q '^mod_version=0.1.60-dev$' source-0160/gradle.properties
+
+      - name: Audit 0.1.60 source and retained resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          BREACH=source-0160/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeBreachCoordinator.java
+          POLICY=source-0160/src/main/java/dev/futurae/veilbound/breach/BreachCombatPolicy.java
+          EQUIP=source-0160/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeVeilforgedEquipmentCoordinator.java
+          MAIN=source-0160/src/main/java/dev/futurae/veilbound/Veilbound.java
+          grep -q 'onLivingDamagePost' "$BREACH"
+          grep -q 'MobEffects.SLOWNESS' "$BREACH"
+          grep -q 'MobEffects.MINING_FATIGUE' "$BREACH"
+          grep -q 'MobEffects.DARKNESS' "$BREACH"
+          grep -q 'wraithDimensionalEnergyDrain' "$BREACH"
+          grep -q 'wraithFractureShock' "$BREACH"
+          grep -q 'BreachCombatPolicy developmentDefault' "$POLICY"
+          grep -q 'healthDamageAfterAbsorption' "$EQUIP"
+          test "$(grep -c 'VEIL_BOUNDARY::onBreakBlock' "$MAIN")" -eq 1
+          test -f source-0160/docs/0.1.60-validation.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, struct
+          resources = Path('source-0160/src/main/resources')
+          assets = resources / 'assets/veilbound'
+          recipes = resources / 'data/veilbound/veilbound/engineering_recipes'
+          json_files = list(resources.rglob('*.json'))
+          mcmeta_files = list(resources.rglob('*.mcmeta'))
+          for path in json_files + mcmeta_files:
+              json.loads(path.read_text(encoding='utf-8'))
+          balance = json.loads((resources / 'data/veilbound/veilbound/balance/domain_stability.json').read_text())
+          combat = balance['breach']['intruder_combat']
+          assert combat['crawler_snare_ticks'] == 80
+          assert combat['wraith_de_drain'] == 5000
+          assert combat['wraith_fracture_shock'] == 4.0
+          assert len(json_files) >= 627
+          assert len(list(recipes.glob('*.json'))) == 120
+          assert len(list((assets / 'textures/item').glob('*.png'))) == 110
+          assert len(list((assets / 'textures/block').glob('*.png'))) == 32
+          assert len(list(assets.rglob('*.png.mcmeta'))) == 75
+          threshold = assets / 'textures/block/threshold_frame.png'
+          data = threshold.read_bytes()
+          assert struct.unpack('>II', data[16:24]) == (32, 256)
+          print('VEILBOUND_0160_RESOURCE_AUDIT=PASS')
+          PY
+          echo VEILBOUND_0160_SOURCE_AUDIT=PASS
+
+      - name: Package 0.1.60 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0160 -cJf Veilbound-0.1.60-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./.vanilla' --exclude='./run' .
+          test -s Veilbound-0.1.60-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0160.log") 2>&1
+          set -euo pipefail
+          cd source-0160
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.60-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.60-dev.jar
+          unzip -Z1 Veilbound-0.1.60-dev.jar | grep -q 'dev/futurae/veilbound/breach/BreachCombatPolicy.class'
+          unzip -Z1 Veilbound-0.1.60-dev.jar | grep -q 'dev/futurae/veilbound/platform/neoforge/NeoForgeBreachCoordinator.class'
+          javap -classpath Veilbound-0.1.60-dev.jar -p dev.futurae.veilbound.platform.neoforge.NeoForgeBreachCoordinator | grep -q 'onLivingDamagePost'
+          RECIPES="$(unzip -Z1 Veilbound-0.1.60-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
+          test "$RECIPES" -eq 120
+          echo "VEILBOUND_0160_JAR_AUDIT=PASS recipes=$RECIPES breach_combat=present" | tee Veilbound-0.1.60-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0160.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0160"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.60-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.60 CI smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.60-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then SMOKE_OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$SMOKE_OK" -ne 1 ]; then tail -n 200 "$LOG" || true; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0160_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.60-dev.jar Veilbound-0.1.60-dev-source.tar.xz Veilbound-0.1.60-dev-server-smoke.log > Veilbound-0.1.60-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.60-dev-diagnostics
+          path: |
+            03-gradle-build-0160.log
+            04-server-setup-0160.log
+            Veilbound-0.1.60-dev.jar
+            Veilbound-0.1.60-dev-source.tar.xz
+            Veilbound-0.1.60-dev-audit.txt
+            Veilbound-0.1.60-dev-SHA256SUMS.txt
+            Veilbound-0.1.60-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.60-dev-final
+          path: |
+            Veilbound-0.1.60-dev.jar
+            Veilbound-0.1.60-dev-source.tar.xz
+            Veilbound-0.1.60-dev-audit.txt
+            Veilbound-0.1.60-dev-SHA256SUMS.txt
+            Veilbound-0.1.60-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

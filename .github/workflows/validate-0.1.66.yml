@@ -1,0 +1,216 @@
+name: Validate Veilbound 0.1.66
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0166:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact validated 0.1.65 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.65-dev-final
+          path: baseline-0165
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34180073851
+
+      - name: Reconstruct 0.1.66 slim first release
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "fcc75b3e44c609218dce4e21a627de9a7cf150a1e614b9529c80845641fcd041  baseline-0165/Veilbound-0.1.65-dev-source.tar.xz" | sha256sum -c -
+          test -s ci-0166/apply-0166.py
+          test "$(find ci-0166/chunks -maxdepth 1 -type f -name 'part*' | wc -l)" -eq 13
+          mkdir -p source-0166
+          tar -xJf baseline-0165/Veilbound-0.1.65-dev-source.tar.xz -C source-0166
+          python3 ci-0166/apply-0166.py source-0166
+
+      - name: Audit slim release source and resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=source-0166
+          grep -q '^mod_version=0.1.66-dev$' "$ROOT/gradle.properties"
+          grep -q 'PROTOCOL = "20"' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/network/NeoForgeNetworking.java"
+          grep -q 'new DomainBounds(-1, -1, -1, 1, 1, 1)' "$ROOT/src/main/java/dev/futurae/veilbound/domain/DomainBounds.java"
+          grep -q 'initializeFirstReleaseCore' "$ROOT/src/main/java/dev/futurae/veilbound/ritual/GenesisSeedService.java"
+          grep -q 'BlockPos.ZERO' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/world/NeoForgeStarterPocketService.java"
+          grep -q 'NeoForgeVeilInterfaceCapabilities::register' "$ROOT/src/main/java/dev/futurae/veilbound/Veilbound.java"
+          grep -q 'DIMENSIONAL(1, "Dimensional", 16L)' "$ROOT/src/main/java/dev/futurae/veilbound/energy/TransducerTier.java"
+          grep -q 'RESONANT(2, "Resonant", 64L)' "$ROOT/src/main/java/dev/futurae/veilbound/energy/TransducerTier.java"
+          grep -q 'PHASE(3, "Phase", 256L)' "$ROOT/src/main/java/dev/futurae/veilbound/energy/TransducerTier.java"
+          grep -q 'CAUSAL(4, "Causal", 1_024L)' "$ROOT/src/main/java/dev/futurae/veilbound/energy/TransducerTier.java"
+          grep -q 'random.nextInt(5_000)' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeExpansionCoordinator.java"
+          grep -q 'random.nextInt(20_000)' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeExpansionCoordinator.java"
+          grep -q 'random.nextInt(100_000)' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeExpansionCoordinator.java"
+          grep -q 'absorbMatterItems' "$ROOT/src/main/java/dev/futurae/veilbound/block/entity/DimensionalTransducerBlockEntity.java"
+          grep -q 'tryPushAdjacent' "$ROOT/src/main/java/dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.java"
+          cmp "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java" <(tar -xJOf baseline-0165/Veilbound-0.1.65-dev-source.tar.xz ./src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java)
+          cmp "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java" <(tar -xJOf baseline-0165/Veilbound-0.1.65-dev-source.tar.xz ./src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java)
+
+          python3 -m pip install --quiet pillow
+          curl -fsSL -o /tmp/stone-26.2.png https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/26.2/assets/minecraft/textures/block/stone.png
+          curl -fsSL -o /tmp/deepslate-26.2.png https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/26.2/assets/minecraft/textures/block/deepslate.png
+          echo "b5e10adc72442bfb257ce7ba0b9bbe36475a0c8cdfec89b80dc9517203ff3e9f  /tmp/stone-26.2.png" | sha256sum -c -
+          echo "dc72c722bec23c929817fab7cc56e08e5e828ae3607fbfb7e7730e68b67d4cfc  /tmp/deepslate-26.2.png" | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json
+          root=Path('source-0166/src/main/resources')
+          for p in list(root.rglob('*.json')) + list(root.rglob('*.mcmeta')):
+              json.loads(p.read_text(encoding='utf-8'))
+          recipes=list((root/'data/veilbound/recipe').glob('*.json'))
+          assert len(recipes)==7, len(recipes)
+          assert not (root/'data/veilbound/veilbound/engineering_recipes').exists()
+          all_paths='\n'.join(str(p).lower() for p in root.rglob('*') if p.is_file())
+          for forbidden in ('mnemonic','axiomatic','axiomite','phaseweave','spatial_generator','memory_archive','domain_orrery','boundary_pylon','threshold_frame','veil_lance'):
+              assert forbidden not in all_paths, forbidden
+          text='\n'.join(p.read_text(errors='ignore').lower() for p in root.rglob('*') if p.is_file() and p.suffix in {'.json','.mcmeta'})
+          for forbidden in ('mnemonic','axiomatic','axiomite'):
+              assert forbidden not in text, forbidden
+          block=root/'assets/veilbound/textures/block'
+          stone=Image.open('/tmp/stone-26.2.png').convert('RGBA')
+          deep=Image.open('/tmp/deepslate-26.2.png').convert('RGBA')
+          masks=[]
+          for name,base in [('dimensional_shard_ore',stone),('deepslate_dimensional_shard_ore',deep)]:
+              img=Image.open(block/f'{name}.png').convert('RGBA')
+              assert img.size==(16,128), (name,img.size)
+              frame_masks=[]
+              for f in range(8):
+                  frame=img.crop((0,f*16,16,(f+1)*16))
+                  mask={(x,y) for y in range(16) for x in range(16) if frame.getpixel((x,y)) != base.getpixel((x,y))}
+                  frame_masks.append(mask)
+              assert all(m==frame_masks[0] for m in frame_masks), name
+              masks.append(frame_masks[0])
+          assert masks[0] == masks[1], 'stone/deepslate shard overlays must share geometry'
+          assert Image.open(root/'assets/veilbound/textures/item/dimensional_shard.png').size==(16,128)
+          for acc in ('resonant_accretion','phase_accretion','causal_accretion'):
+              assert Image.open(block/f'{acc}.png').size==(16,128)
+          configured=json.loads((root/'data/veilbound/worldgen/configured_feature/dimensional_shard_ore.json').read_text())
+          placed=json.loads((root/'data/veilbound/worldgen/placed_feature/dimensional_shard_ore.json').read_text())
+          assert configured['config']['size']==3
+          count=[m for m in placed['placement'] if m['type']=='minecraft:count'][0]['count']
+          assert count==2
+          print('VEILBOUND_0166_RESOURCE_AUDIT=PASS recipes=7 ores=2 accretions=3 shard_frames=8')
+          PY
+          echo VEILBOUND_0166_SOURCE_AUDIT=PASS
+
+      - name: Package 0.1.66 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0166 -cJf Veilbound-0.1.66-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./run' .
+          test -s Veilbound-0.1.66-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0166.log") 2>&1
+          set -euo pipefail
+          cd source-0166
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.66-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.66-dev.jar
+          for cls in \
+            dev/futurae/veilbound/client/screen/VeilInventoryScreen.class \
+            dev/futurae/veilbound/client/screen/DomainControlsScreen.class \
+            dev/futurae/veilbound/block/entity/DimensionalTransducerBlockEntity.class \
+            dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.class; do
+              unzip -Z1 Veilbound-0.1.66-dev.jar | grep -q "$cls"
+          done
+          RECIPES="$(unzip -Z1 Veilbound-0.1.66-dev.jar | grep -c '^data/veilbound/recipe/.*\.json$')"
+          test "$RECIPES" -eq 7
+          test "$(unzip -Z1 Veilbound-0.1.66-dev.jar | grep -c '^assets/veilbound/textures/block/.*dimensional_shard_ore\.png$')" -eq 2
+          test "$(unzip -Z1 Veilbound-0.1.66-dev.jar | grep -c '^assets/veilbound/textures/block/.*accretion\.png$')" -eq 3
+          if unzip -Z1 Veilbound-0.1.66-dev.jar | grep -Eqi 'assets/veilbound/.*(mnemonic|axiomatic|axiomite|phaseweave|spatial_generator|memory_archive|domain_orrery|boundary_pylon|threshold_frame|veil_lance)'; then
+            echo 'Forbidden removed first-release resource found in JAR'; exit 1
+          fi
+          echo "VEILBOUND_0166_JAR_AUDIT=PASS recipes=$RECIPES terminal=retained first_release=slim transducers=4 accretions=3" | tee Veilbound-0.1.66-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0166.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0166"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.66-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.66 CI smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.66-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then SMOKE_OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$SMOKE_OK" -ne 1 ]; then tail -n 250 "$LOG" || true; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0166_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.66-dev.jar Veilbound-0.1.66-dev-source.tar.xz Veilbound-0.1.66-dev-server-smoke.log > Veilbound-0.1.66-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.66-dev-diagnostics
+          path: |
+            03-gradle-build-0166.log
+            04-server-setup-0166.log
+            Veilbound-0.1.66-dev.jar
+            Veilbound-0.1.66-dev-source.tar.xz
+            Veilbound-0.1.66-dev-audit.txt
+            Veilbound-0.1.66-dev-SHA256SUMS.txt
+            Veilbound-0.1.66-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.66-dev-final
+          path: |
+            Veilbound-0.1.66-dev.jar
+            Veilbound-0.1.66-dev-source.tar.xz
+            Veilbound-0.1.66-dev-audit.txt
+            Veilbound-0.1.66-dev-SHA256SUMS.txt
+            Veilbound-0.1.66-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

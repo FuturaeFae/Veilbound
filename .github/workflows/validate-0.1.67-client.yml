@@ -1,0 +1,90 @@
+name: Validate Veilbound 0.1.67 Client
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  client-preflight-0167:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact validated 0.1.66 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.66-dev-final
+          path: baseline-0166
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34188257046
+
+      - name: Reconstruct 0.1.67 client source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "97abce24b35946a28749fde62f9e23e0bfd5d96e9d162dcb612657bbfca2ce1a  baseline-0166/Veilbound-0.1.66-dev-source.tar.xz" | sha256sum -c -
+          mkdir -p source-0167
+          tar -xJf baseline-0166/Veilbound-0.1.66-dev-source.tar.xz -C source-0167
+          python3 ci-0167/apply-0167.py source-0167
+          grep -q 'DimensionalCoreRenderPipelines::register' source-0167/src/main/java/dev/futurae/veilbound/client/VeilboundClient.java
+          grep -q 'core/dimensional_core' source-0167/src/main/java/dev/futurae/veilbound/client/render/DimensionalCoreRenderPipelines.java
+
+      - name: Xvfb Minecraft client boot, shader and resource smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          fi
+          cd source-0167
+          set +e
+          timeout -k 15s 180s xvfb-run -a gradle --no-daemon runClient > "$GITHUB_WORKSPACE/05-client-smoke-0167.log" 2>&1
+          CODE=$?
+          set -e
+          if [ "$CODE" -ne 0 ] && [ "$CODE" -ne 124 ]; then
+            tail -n 350 "$GITHUB_WORKSPACE/05-client-smoke-0167.log" || true
+            exit "$CODE"
+          fi
+          LOG=run/logs/latest.log
+          test -s "$LOG"
+          grep -Eiq 'LWJGL|OpenGL|Reloading ResourceManager|Backend library' "$LOG"
+          if grep -Eiq 'Crash report|Exception in thread "Render thread"|ModLoadingException|Failed to create window|Could not initialize GLFW' "$LOG"; then
+            tail -n 350 "$LOG" || true
+            exit 1
+          fi
+          if grep -Eiq '(dimensional_core|veilbound).{0,180}(shader|pipeline|missing|failed|error)|(shader|pipeline|missing|failed|error).{0,180}(dimensional_core|veilbound)' "$LOG"; then
+            tail -n 350 "$LOG" || true
+            exit 1
+          fi
+          cp "$LOG" "$GITHUB_WORKSPACE/Veilbound-0.1.67-dev-client-smoke.log"
+          echo VEILBOUND_0167_CLIENT_SMOKE=PASS
+
+      - name: Upload client preflight diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.67-dev-client-preflight
+          path: |
+            05-client-smoke-0167.log
+            Veilbound-0.1.67-dev-client-smoke.log
+          if-no-files-found: warn
+          retention-days: 7

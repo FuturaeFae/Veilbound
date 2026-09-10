@@ -1,0 +1,43 @@
+--- a/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java
++++ b/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java
+@@ -213,10 +213,11 @@
+         }
+     }
+ 
+-    private void withdraw(ItemResource resource, boolean single) {
++    private void withdraw(ItemResource resource, boolean halfStack) {
+         if (resource == null || resource.isEmpty()) return;
+-        sendInventory(single ? VeilInventoryActionPayload.Action.WITHDRAW_ONE
+-                : VeilInventoryActionPayload.Action.WITHDRAW_STACK, snapshot.page(), resource);
++        int maxStack = Math.max(1, resource.getMaxStackSize());
++        int requested = halfStack ? Math.max(1, (maxStack + 1) / 2) : maxStack;
++        sendInventory(VeilInventoryActionPayload.Action.WITHDRAW_STACK, snapshot.page(), resource, requested);
+     }
+ 
+     private boolean handlePlayerInventoryClick(int inventorySlot, MouseButtonEvent event, boolean doubleClick) {
+@@ -403,8 +404,12 @@
+     }
+ 
+     private void sendInventory(VeilInventoryActionPayload.Action action, int page, ItemResource resource) {
++        sendInventory(action, page, resource, 64);
++    }
++
++    private void sendInventory(VeilInventoryActionPayload.Action action, int page, ItemResource resource, int quantity) {
+         ClientPacketDistributor.sendToServer(new VeilInventoryActionPayload(
+-                action, Math.max(0, page), resource, 64,
++                action, Math.max(0, page), resource, Math.max(1, Math.min(64, quantity)),
+                 inventoryQuery, inventorySort, MatterPatternPageService.FilterMode.ALL));
+     }
+ 
+--- a/src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java
++++ b/src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java
+@@ -57,7 +57,8 @@
+                 else withdrawStored(player, access.inventory(), access.capacity(), payload.resource(), 1);
+             }
+             case WITHDRAW_STACK -> {
+-                int requested = payload.resource().isEmpty() ? 0 : payload.resource().getMaxStackSize();
++                int requested = payload.resource().isEmpty() ? 0
++                        : Math.min(payload.resource().getMaxStackSize(), Math.max(1, payload.quantity()));
+                 if (isMatterPattern(record, payload.resource(), player)) synthesize(player, record, payload.resource(), requested);
+                 else withdrawStored(player, access.inventory(), access.capacity(), payload.resource(), requested);
+             }

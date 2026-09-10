@@ -1,0 +1,195 @@
+name: Validate Veilbound 0.1.63
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0163:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact 0.1.62 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.62-dev-final
+          path: baseline-0162
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34105344582
+
+      - name: Reconstruct 0.1.63 Boundary Dynamo GUI pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "95002be018e37cc0f3ceceb08f007e1fac2c175d443d717a3ab77f30c0e27643  baseline-0162/Veilbound-0.1.62-dev-source.tar.xz" | sha256sum -c -
+          test -s ci-0163/apply-0163.py
+          test -s ci-0163/BoundaryDynamoMenu.java
+          test -s ci-0163/BoundaryDynamoScreen.java
+          test -s ci-0163/VeilboundMenus.java
+          mkdir -p source-0163
+          tar -xJf baseline-0162/Veilbound-0.1.62-dev-source.tar.xz -C source-0163
+          python3 ci-0163/apply-0163.py source-0163
+          grep -q '^mod_version=0.1.63-dev$' source-0163/gradle.properties
+
+      - name: Audit 0.1.63 source and retained resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYNAMO=source-0163/src/main/java/dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.java
+          MENU=source-0163/src/main/java/dev/futurae/veilbound/menu/BoundaryDynamoMenu.java
+          SCREEN=source-0163/src/main/java/dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.java
+          MENUS=source-0163/src/main/java/dev/futurae/veilbound/registry/VeilboundMenus.java
+          CLIENT=source-0163/src/main/java/dev/futurae/veilbound/client/VeilboundClient.java
+          MAIN=source-0163/src/main/java/dev/futurae/veilbound/Veilbound.java
+          grep -q 'INVENTORY_SIZE = 2' "$DYNAMO"
+          grep -q 'return new BoundaryDynamoMenu' "$DYNAMO"
+          grep -q 'DATA_COUNT = 4' "$MENU"
+          test "$(grep -c 'addSlot(new DynamoSlot' "$MENU")" -eq 2
+          grep -q 'addDataSlots(data)' "$MENU"
+          grep -q 'quickMoveStack' "$MENU"
+          grep -q 'extends AbstractContainerScreen<BoundaryDynamoMenu>' "$SCREEN"
+          grep -q 'energyPercent' "$SCREEN"
+          grep -q 'burnPercent' "$SCREEN"
+          grep -q 'status.charging' "$SCREEN"
+          grep -q 'IMenuTypeExtension.create(BoundaryDynamoMenu::new)' "$MENUS"
+          grep -q 'registerMenuScreens' "$CLIENT"
+          grep -q 'VeilboundMenus.BOUNDARY_DYNAMO' "$CLIENT"
+          grep -q 'VeilboundMenus.register(modBus)' "$MAIN"
+          test -f source-0163/docs/0.1.63-validation.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, struct
+          root = Path('source-0163/src/main/resources')
+          for path in list(root.rglob('*.json')) + list(root.rglob('*.mcmeta')):
+              json.loads(path.read_text(encoding='utf-8'))
+          lang = json.loads((root / 'assets/veilbound/lang/en_us.json').read_text())
+          required = [
+              'screen.veilbound.boundary_dynamo.fuel',
+              'screen.veilbound.boundary_dynamo.charge',
+              'screen.veilbound.boundary_dynamo.energy',
+              'screen.veilbound.boundary_dynamo.burn',
+              'screen.veilbound.boundary_dynamo.status.charging',
+          ]
+          assert all(k in lang for k in required)
+          ores = sorted((root / 'assets/veilbound/textures/block').glob('*ore.png'))
+          assert len(ores) == 12
+          for path in ores:
+              data = path.read_bytes()
+              assert struct.unpack('>II', data[16:24]) == (16, 128)
+          recipes = list((root / 'data/veilbound/veilbound/engineering_recipes').glob('*.json'))
+          assert len(recipes) == 120
+          domain = json.loads((root / 'data/veilbound/dimension_type/domain.json').read_text())
+          assert domain['attributes']['neoforge:custom_clouds'] == 'veilbound:no_clouds'
+          print('VEILBOUND_0163_RESOURCE_AUDIT=PASS gui=custom-two-slot ores=12 engineering_recipes=120')
+          PY
+          echo VEILBOUND_0163_SOURCE_AUDIT=PASS
+
+      - name: Package 0.1.63 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0163 -cJf Veilbound-0.1.63-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./.vanilla' --exclude='./run' .
+          test -s Veilbound-0.1.63-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0163.log") 2>&1
+          set -euo pipefail
+          cd source-0163
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.63-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.63-dev.jar
+          unzip -Z1 Veilbound-0.1.63-dev.jar | grep -q 'dev/futurae/veilbound/menu/BoundaryDynamoMenu.class'
+          unzip -Z1 Veilbound-0.1.63-dev.jar | grep -q 'dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.class'
+          unzip -Z1 Veilbound-0.1.63-dev.jar | grep -q 'dev/futurae/veilbound/registry/VeilboundMenus.class'
+          unzip -Z1 Veilbound-0.1.63-dev.jar | grep -q 'dev/futurae/veilbound/block/entity/BoundaryDynamoBlockEntity.class'
+          RECIPES="$(unzip -Z1 Veilbound-0.1.63-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
+          ORES="$(unzip -Z1 Veilbound-0.1.63-dev.jar | grep -c '^assets/veilbound/textures/block/.*ore\.png$')"
+          test "$RECIPES" -eq 120
+          test "$ORES" -eq 12
+          echo "VEILBOUND_0163_JAR_AUDIT=PASS engineering_recipes=$RECIPES ore_sheets=$ORES boundary_dynamo_gui=custom-two-slot" | tee Veilbound-0.1.63-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0163.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0163"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.63-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.63 CI smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.63-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then SMOKE_OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$SMOKE_OK" -ne 1 ]; then tail -n 200 "$LOG" || true; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0163_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.63-dev.jar Veilbound-0.1.63-dev-source.tar.xz Veilbound-0.1.63-dev-server-smoke.log > Veilbound-0.1.63-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.63-dev-diagnostics
+          path: |
+            03-gradle-build-0163.log
+            04-server-setup-0163.log
+            Veilbound-0.1.63-dev.jar
+            Veilbound-0.1.63-dev-source.tar.xz
+            Veilbound-0.1.63-dev-audit.txt
+            Veilbound-0.1.63-dev-SHA256SUMS.txt
+            Veilbound-0.1.63-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.63-dev-final
+          path: |
+            Veilbound-0.1.63-dev.jar
+            Veilbound-0.1.63-dev-source.tar.xz
+            Veilbound-0.1.63-dev-audit.txt
+            Veilbound-0.1.63-dev-SHA256SUMS.txt
+            Veilbound-0.1.63-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

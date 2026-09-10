@@ -1,0 +1,129 @@
+diff --git a/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java b/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
+index 1611f05..223686f 100644
+--- a/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
++++ b/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
+@@ -66,17 +66,17 @@ public final class VeilboundArmorModels {
+     }
+ 
+     public static void registerClientExtensions(RegisterClientExtensionsEvent event) {
+-        event.registerItem(extension(PHASEWEAVE_OUTER_MODEL, PHASEWEAVE_INNER_MODEL),
++        event.registerItem(extension(PHASEWEAVE_OUTER_MODEL, PHASEWEAVE_INNER_MODEL, ArmorMotion.PHASEWEAVE),
+                 VeilboundItems.PHASEWEAVE_HELMET.get(),
+                 VeilboundItems.PHASEWEAVE_CHESTPLATE.get(),
+                 VeilboundItems.PHASEWEAVE_LEGGINGS.get(),
+                 VeilboundItems.PHASEWEAVE_BOOTS.get());
+-        event.registerItem(extension(CAUSAL_OUTER_MODEL, CAUSAL_INNER_MODEL),
++        event.registerItem(extension(CAUSAL_OUTER_MODEL, CAUSAL_INNER_MODEL, ArmorMotion.CAUSAL),
+                 VeilboundItems.CAUSAL_HELMET.get(),
+                 VeilboundItems.CAUSAL_CHESTPLATE.get(),
+                 VeilboundItems.CAUSAL_LEGGINGS.get(),
+                 VeilboundItems.CAUSAL_BOOTS.get());
+-        event.registerItem(extension(SOVEREIGN_OUTER_MODEL, SOVEREIGN_INNER_MODEL),
++        event.registerItem(extension(SOVEREIGN_OUTER_MODEL, SOVEREIGN_INNER_MODEL, ArmorMotion.SOVEREIGN),
+                 VeilboundItems.SOVEREIGN_HELMET.get(),
+                 VeilboundItems.SOVEREIGN_CHESTPLATE.get(),
+                 VeilboundItems.SOVEREIGN_LEGGINGS.get(),
+@@ -85,7 +85,8 @@ public final class VeilboundArmorModels {
+ 
+     private static IClientItemExtensions extension(
+             Lazy<HumanoidModel<HumanoidRenderState>> outer,
+-            Lazy<HumanoidModel<HumanoidRenderState>> inner) {
++            Lazy<HumanoidModel<HumanoidRenderState>> inner,
++            ArmorMotion motion) {
+         return new IClientItemExtensions() {
+             @Override
+             public Model getGenericArmorModel(
+@@ -96,6 +97,7 @@ public final class VeilboundArmorModels {
+                 if (original instanceof HumanoidModel<?> originalHumanoid) {
+                     copyPoseWithoutVisibility(originalHumanoid, model);
+                 }
++                applyWornAnimation(model, motion);
+                 // This must happen after pose-copying. NeoForge's default humanoid replacement path also
+                 // copies visibility, which is what used to make one equipped piece expose the whole suit.
+                 configureSlotVisibility(model, stack);
+@@ -105,6 +107,85 @@ public final class VeilboundArmorModels {
+     }
+ 
+ 
++    /**
++     * Autonomous client-side motion for the worn armor geometry itself. Inventory sprites already
++     * animate separately; this pass makes the custom equipped silhouettes visibly alive as well.
++     *
++     * <p>NeoForge 26.2's {@code setupModelAnimations} hook is intentionally not wired into the
++     * equipment renderer yet, so animation is applied here during the per-layer model query. Every
++     * transform is assigned from an absolute time sample rather than accumulated, preventing drift
++     * across repeated equipment layers or multiple rendered players.</p>
++     */
++    private static void applyWornAnimation(HumanoidModel<HumanoidRenderState> model, ArmorMotion motion) {
++        double t = System.nanoTime() * 1.0E-9D;
++        float slow = (float) Math.sin(t * 1.35D);
++        float medium = (float) Math.sin(t * 2.10D);
++        float counter = (float) Math.sin(t * 1.70D + Math.PI * 0.5D);
++
++        switch (motion) {
++            case PHASEWEAVE -> {
++                animateChildScale(model.head, "phaseweave_visor", 1.0F + 0.018F * medium, 1.0F, 1.0F + 0.055F * medium);
++                animateChildOffset(model.head, "phaseweave_crownrail", 0.0F, -0.06F - 0.06F * slow, 0.0F);
++                animateChildRoll(model.leftArm, "phaseweave_shoulder_fin", 0.035F + 0.045F * counter);
++                animateChildRoll(model.rightArm, "phaseweave_shoulder_fin", -0.035F - 0.045F * counter);
++                animateChildScale(model.leftLeg, "phaseweave_knee", 1.0F + 0.025F * slow, 1.0F, 1.0F);
++                animateChildScale(model.rightLeg, "phaseweave_knee", 1.0F - 0.025F * slow, 1.0F, 1.0F);
++            }
++            case CAUSAL -> {
++                animateChildYaw(model.head, "causal_temporal_ridge", 0.040F * slow);
++                animateChildOffset(model.head, "causal_brow", 0.0F, -0.035F - 0.035F * medium, 0.0F);
++                animateChildScale(model.body, "causal_breastplate", 1.0F + 0.018F * counter, 1.0F + 0.025F * counter, 1.0F);
++                animateChildRoll(model.leftArm, "veilbound_pauldron", 0.045F + 0.060F * slow);
++                animateChildRoll(model.rightArm, "veilbound_pauldron", -0.045F - 0.060F * slow);
++                animateChildScale(model.leftLeg, "veilbound_shin", 1.0F, 1.0F + 0.020F * medium, 1.0F);
++                animateChildScale(model.rightLeg, "veilbound_shin", 1.0F, 1.0F - 0.020F * medium, 1.0F);
++            }
++            case SOVEREIGN -> {
++                // The crown subtly floats while the regulator and worldline plate breathe out of phase.
++                animateChildOffset(model.head, "sovereign_crown", 0.0F, -0.10F - 0.10F * slow, 0.0F);
++                animateChildYaw(model.head, "sovereign_crown", 0.028F * counter);
++                animateChildScale(model.body, "sovereign_regulator", 1.0F + 0.025F * medium, 1.0F + 0.035F * medium, 1.0F + 0.055F * medium);
++                animateChildScale(model.body, "sovereign_worldline_back", 1.0F + 0.035F * counter, 1.0F + 0.020F * counter, 1.0F);
++                animateChildRoll(model.leftArm, "veilbound_pauldron", 0.070F + 0.075F * counter);
++                animateChildRoll(model.rightArm, "veilbound_pauldron", -0.070F - 0.075F * counter);
++                animateChildYaw(model.leftArm, "sovereign_forearm", 0.030F * medium);
++                animateChildYaw(model.rightArm, "sovereign_forearm", -0.030F * medium);
++                animateChildScale(model.leftLeg, "veilbound_shin", 1.0F + 0.022F * slow, 1.0F, 1.0F + 0.018F * slow);
++                animateChildScale(model.rightLeg, "veilbound_shin", 1.0F - 0.022F * slow, 1.0F, 1.0F - 0.018F * slow);
++            }
++        }
++    }
++
++    private static void animateChildScale(ModelPart parent, String name, float x, float y, float z) {
++        if (!parent.hasChild(name)) return;
++        ModelPart part = parent.getChild(name);
++        part.xScale = x;
++        part.yScale = y;
++        part.zScale = z;
++    }
++
++    private static void animateChildOffset(ModelPart parent, String name, float x, float y, float z) {
++        if (!parent.hasChild(name)) return;
++        ModelPart part = parent.getChild(name);
++        part.x = x;
++        part.y = y;
++        part.z = z;
++    }
++
++    private static void animateChildRoll(ModelPart parent, String name, float roll) {
++        if (!parent.hasChild(name)) return;
++        parent.getChild(name).zRot = roll;
++    }
++
++    private static void animateChildYaw(ModelPart parent, String name, float yaw) {
++        if (!parent.hasChild(name)) return;
++        parent.getChild(name).yRot = yaw;
++    }
++
++    private enum ArmorMotion {
++        PHASEWEAVE, CAUSAL, SOVEREIGN
++    }
++
+     private static void copyPoseWithoutVisibility(HumanoidModel<?> source, HumanoidModel<?> target) {
+         copyPose(source.head, target.head);
+         copyPose(source.hat, target.hat);

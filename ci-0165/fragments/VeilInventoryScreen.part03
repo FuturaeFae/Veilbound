@@ -1,0 +1,114 @@
+        drawVanillaPanel(graphics, side, top, 70, 108);
+        graphics.text(font, Component.literal("Crafting"), side + 7, top + 8, 0xFF404040, false);
+
+        List<Boolean> availability = selectedAvailability();
+        for (int i = 0; i < craftingGrid.size(); i++) {
+            int x = side + 7 + (i % 3) * SLOT;
+            int y = top + 22 + (i / 3) * SLOT;
+            drawSlot(graphics, x, y);
+            ItemResource resource = craftingGrid.get(i);
+            if (!resource.isEmpty()) graphics.item(resource.toStack(1), x + 1, y + 1);
+            if (selectedRecipe >= 0 && i < availability.size() && !availability.get(i) && !resource.isEmpty()) {
+                graphics.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0x66CC0000);
+            }
+            if (selectedRecipe < 0 && i == activeManualCell) {
+                graphics.fill(x, y, x + SLOT, y + 1, 0xFFFFFF55);
+                graphics.fill(x, y + SLOT - 1, x + SLOT, y + SLOT, 0xFFFFFF55);
+                graphics.fill(x, y, x + 1, y + SLOT, 0xFFFFFF55);
+                graphics.fill(x + SLOT - 1, y, x + SLOT, y + SLOT, 0xFFFFFF55);
+            }
+        }
+
+        graphics.centeredText(font, Component.literal("↓"), side + 34, top + 76, 0xFF404040);
+        int outX = side + 25;
+        int outY = top + 84;
+        drawSlot(graphics, outX, outY);
+        if (craftingPreview.craftable() && !craftingPreview.result().isEmpty()) {
+            ItemStack result = craftingPreview.result().toStack(Math.max(1, craftingPreview.resultCount()));
+            graphics.item(result, outX + 1, outY + 1);
+            if (craftingPreview.resultCount() > 1) drawCount(graphics, craftingPreview.resultCount(), outX, outY);
+        }
+        if (inside(mouseX, mouseY, outX, outY, SLOT, SLOT)) {
+            String message = craftingPreview.craftable()
+                    ? "Click: craft one\nShift-click: craft up to a full stack"
+                    : craftReasonText(craftingPreview.reason());
+            graphics.setTooltipForNextFrame(font, Component.literal(message), mouseX, mouseY);
+        }
+    }
+
+    private List<Boolean> selectedAvailability() {
+        if (selectedRecipe >= 0 && selectedRecipe < craftables.entries().size()) {
+            return craftables.entries().get(selectedRecipe).learnedGrid();
+        }
+        ArrayList<Boolean> all = new ArrayList<>(9);
+        for (int i = 0; i < 9; i++) all.add(true);
+        return all;
+    }
+
+    private static void drawVanillaPanel(GuiGraphicsExtractor graphics, int x, int y, int w, int h) {
+        graphics.fill(x, y, x + w, y + h, 0xFF373737);
+        graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0xFFFFFFFF);
+        graphics.fill(x + 2, y + 2, x + w - 2, y + h - 2, 0xFFC6C6C6);
+        graphics.fill(x + w - 2, y + 2, x + w - 1, y + h - 1, 0xFF555555);
+        graphics.fill(x + 2, y + h - 2, x + w - 1, y + h - 1, 0xFF555555);
+    }
+
+    private static void drawInset(GuiGraphicsExtractor graphics, int x, int y, int w, int h) {
+        graphics.fill(x, y, x + w, y + h, 0xFF555555);
+        graphics.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0xFFFFFFFF);
+        graphics.fill(x + 2, y + 2, x + w - 2, y + h - 2, 0xFFD8D8D8);
+    }
+
+    private static void drawSlot(GuiGraphicsExtractor graphics, int x, int y) {
+        graphics.fill(x, y, x + SLOT, y + SLOT, 0xFF373737);
+        graphics.fill(x + 1, y + 1, x + SLOT - 1, y + SLOT - 1, 0xFFFFFFFF);
+        graphics.fill(x + 2, y + 2, x + SLOT - 1, y + SLOT - 1, 0xFF8B8B8B);
+    }
+
+    private void drawCount(GuiGraphicsExtractor graphics, long count, int x, int y) {
+        String text = compact(count);
+        int width = font.width(text);
+        graphics.text(font, Component.literal(text), x + SLOT - width - 1, y + SLOT - 9, 0xFFFFFFFF, true);
+    }
+
+    private static String compact(long value) {
+        if (value < 1_000L) return Long.toString(value);
+        if (value < 1_000_000L) return trim(value / 1_000.0) + "k";
+        if (value < 1_000_000_000L) return trim(value / 1_000_000.0) + "m";
+        if (value < 1_000_000_000_000L) return trim(value / 1_000_000_000.0) + "b";
+        return trim(value / 1_000_000_000_000.0) + "t";
+    }
+
+    private static String trim(double value) {
+        if (value >= 100 || Math.rint(value) == value) return Long.toString(Math.round(value));
+        return String.format(Locale.ROOT, value >= 10 ? "%.1f" : "%.2f", value)
+                .replaceAll("0+$", "").replaceAll("\\.$", "");
+    }
+
+    private static Component sortShort(MatterPatternPageService.SortMode mode) {
+        return Component.literal(switch (mode) {
+            case NAME_ASC -> "A–Z";
+            case NAME_DESC -> "Z–A";
+            case COST_ASC -> "M↑";
+            case COST_DESC -> "M↓";
+        });
+    }
+
+    private static String craftReasonText(String reason) {
+        return switch (reason == null ? "" : reason) {
+            case "empty_grid" -> "Add ingredients to the 3×3 grid";
+            case "no_recipe" -> "No matching crafting recipe";
+            case "ingredients_missing" -> "Missing physical ingredients";
+            case "matter_missing" -> "Not enough Matter";
+            case "pattern_missing" -> "A required Matter pattern is not learned";
+            default -> "Craft unavailable";
+        };
+    }
+
+    private static boolean inside(int mouseX, int mouseY, int x, int y, int w, int h) {
+        return mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
+    }
+
+    @Override
+    public boolean isPauseScreen() { return false; }
+}
