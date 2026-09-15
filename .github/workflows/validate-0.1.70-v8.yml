@@ -1,0 +1,234 @@
+name: Validate Veilbound 0.1.70 V8
+
+on:
+  push:
+    branches:
+      - dev/veilbound-0.1.48-armor-models
+    paths:
+      - 'ci-0170-v8/**'
+      - '.github/workflows/validate-0.1.70-v8.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download validated 0.1.69 baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.69-dev-v6-final
+          path: baseline-0169
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34419246902
+
+      - name: Reconstruct exact 0.1.70 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '4ca2719b81c1271c24663a7ba8459acb59dea00c8fdbf0dd4551f23de17e01c8  baseline-0169/Veilbound-0.1.69-dev-source.tar.xz' | sha256sum -c -
+          echo 'd2044e641ebdf3c68ce015205bf6934ea743c765e5c427b88bc9396e1b8fb540  ci-0170-v8/overlay.tar.gz' | sha256sum -c -
+          tar -tzf ci-0170-v8/overlay.tar.gz >/dev/null
+          mkdir source-0170
+          tar -xJf baseline-0169/Veilbound-0.1.69-dev-source.tar.xz -C source-0170
+          tar -xzf ci-0170-v8/overlay.tar.gz -C source-0170
+          rm -f source-0170/src/main/resources/assets/veilbound/textures/block/{dimensional,resonant,phase,causal}_transducer_core.png.mcmeta
+          grep -q '^mod_version=0.1.70-dev$' source-0170/gradle.properties
+          echo VEILBOUND_0170_V8_RECONSTRUCTION=PASS
+
+      - name: Install texture audit dependency
+        run: python3 -m pip install --user pillow
+
+      - name: Audit 0.1.70 source, textures, blocks and models
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=source-0170
+          grep -q 'PANEL_WIDTH = 276' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'GRID_ROWS = 5' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'Assembler' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'super(menu, inventory, title, 248, 190)' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DimensionalTransducerScreen.java"
+          grep -q 'Power Telemetry' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.java"
+          grep -q 'Dimensional Energy' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java"
+          grep -q 'noOcclusion' "$ROOT/src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          from PIL import Image
+          root=Path('source-0170')
+          res=root/'src/main/resources'
+          tex=res/'assets/veilbound/textures'
+
+          # Item art must be animated 32px frames with transparent backgrounds.
+          for name in ('dimensional_shard','resonant_crystal','phase_mote','causal_fragment','genesis_seed'):
+              im=Image.open(tex/'item'/f'{name}.png').convert('RGBA')
+              assert im.size==(32,128),(name,im.size)
+              for frame in range(4):
+                  f=im.crop((0,frame*32,32,(frame+1)*32))
+                  alpha=list(f.getchannel('A').getdata())
+                  assert min(alpha)==0,(name,frame,'no transparent background')
+                  assert max(alpha)==255,(name,frame,'no opaque item pixels')
+
+          # Every requested block texture must remain completely opaque.
+          opaque=('dimensional_shard_ore','deepslate_dimensional_shard_ore',
+                  'resonant_accretion','phase_accretion','causal_accretion',
+                  'dimensional_block','resonant_block','phase_block','causal_block',
+                  'void_anchor_top','void_anchor_side','void_anchor_bottom')
+          for name in opaque:
+              im=Image.open(tex/'block'/f'{name}.png').convert('RGBA')
+              assert im.size==(32,128),(name,im.size)
+              assert min(im.getchannel('A').getdata())==255,(name,'transparent block pixel')
+
+          # Decorative block inventory definitions/models must actually exist and point to cube models.
+          for name in ('dimensional_block','resonant_block','phase_block','causal_block'):
+              itemdef=json.loads((res/'assets/veilbound/items'/f'{name}.json').read_text())
+              assert itemdef=={'model':{'type':'minecraft:model','model':f'veilbound:item/{name}'}},(name,itemdef)
+              itemmodel=json.loads((res/'assets/veilbound/models/item'/f'{name}.json').read_text())
+              assert itemmodel=={'parent':f'veilbound:block/{name}'},(name,itemmodel)
+              for rel in (f'assets/veilbound/blockstates/{name}.json',
+                          f'assets/veilbound/models/block/{name}.json',
+                          f'data/veilbound/loot_table/blocks/{name}.json',
+                          f'data/veilbound/recipe/{name}.json',
+                          f'data/veilbound/recipe/{name}_unpacking.json'):
+                  assert (res/rel).is_file(),rel
+
+          # Keep the custom non-cube transducer geometry the user approved.
+          for tier in ('dimensional','resonant','phase','causal'):
+              model=json.loads((res/'assets/veilbound/models/block'/f'{tier}_transducer.json').read_text())
+              elems=model.get('elements',[])
+              assert len(elems)>=3,(tier,len(elems))
+              assert not (len(elems)==1 and elems[0].get('from')==[0,0,0] and elems[0].get('to')==[16,16,16]),tier
+              for elem in elems:
+                  for face,spec in elem.get('faces',{}).items():
+                      if face!='down': assert 'cullface' not in spec,(tier,face)
+
+          print('VEILBOUND_0170_V8_STATIC_AUDIT=PASS')
+          PY
+
+      - name: Package source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0170 -cJf Veilbound-0.1.70-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./run' .
+          test -s Veilbound-0.1.70-dev-source.tar.xz
+
+      - name: Build exact mod JAR with Gradle
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0170.log") 2>&1
+          set -euo pipefail
+          cd source-0170
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.70-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.70-dev.jar
+          unzip -Z1 Veilbound-0.1.70-dev.jar | grep -Eq '^META-INF/(neoforge\.mods\.toml|mods\.toml)$'
+          unzip -Z1 Veilbound-0.1.70-dev.jar | grep -qx 'dev/futurae/veilbound/Veilbound.class'
+          for entry in \
+            dev/futurae/veilbound/client/screen/VeilInventoryScreen.class \
+            dev/futurae/veilbound/client/screen/DimensionalTransducerScreen.class \
+            dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.class \
+            dev/futurae/veilbound/client/screen/DomainControlsScreen.class \
+            assets/veilbound/items/dimensional_block.json \
+            assets/veilbound/items/resonant_block.json \
+            assets/veilbound/items/phase_block.json \
+            assets/veilbound/items/causal_block.json \
+            assets/veilbound/textures/item/dimensional_shard.png \
+            assets/veilbound/textures/item/resonant_crystal.png \
+            assets/veilbound/textures/item/phase_mote.png \
+            assets/veilbound/textures/item/causal_fragment.png \
+            assets/veilbound/textures/block/dimensional_shard_ore.png \
+            assets/veilbound/textures/block/deepslate_dimensional_shard_ore.png \
+            assets/veilbound/textures/block/resonant_accretion.png \
+            assets/veilbound/textures/block/phase_accretion.png \
+            assets/veilbound/textures/block/causal_accretion.png \
+            assets/veilbound/textures/block/dimensional_block.png \
+            assets/veilbound/textures/block/resonant_block.png \
+            assets/veilbound/textures/block/phase_block.png \
+            assets/veilbound/textures/block/causal_block.png \
+            assets/veilbound/textures/block/void_anchor_top.png \
+            assets/veilbound/models/block/dimensional_transducer.json; do
+            unzip -Z1 Veilbound-0.1.70-dev.jar | grep -qx "$entry"
+          done
+          echo VEILBOUND_0170_V8_VALID_MOD_JAR_AUDIT=PASS | tee Veilbound-0.1.70-dev-audit.txt
+
+      - name: NeoForge 26.2.0.75 exact-JAR smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0170.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0170"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.70-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods" && cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo eula=true > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.70 V8 smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.70-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 & SERVER_PID=$!
+          OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then OK=1; break; fi
+            if grep -Eq 'Invalid mod file|ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$OK" -ne 1 ]; then tail -n 300 "$LOG"; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0170_V8_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.70-dev.jar Veilbound-0.1.70-dev-source.tar.xz Veilbound-0.1.70-dev-server-smoke.log > Veilbound-0.1.70-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.70-dev-v8-diagnostics
+          path: |
+            03-gradle-build-0170.log
+            04-server-setup-0170.log
+            Veilbound-0.1.70-dev.jar
+            Veilbound-0.1.70-dev-source.tar.xz
+            Veilbound-0.1.70-dev-audit.txt
+            Veilbound-0.1.70-dev-SHA256SUMS.txt
+            Veilbound-0.1.70-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.70-dev-v8-final
+          path: |
+            Veilbound-0.1.70-dev.jar
+            Veilbound-0.1.70-dev-source.tar.xz
+            Veilbound-0.1.70-dev-audit.txt
+            Veilbound-0.1.70-dev-SHA256SUMS.txt
+            Veilbound-0.1.70-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30
