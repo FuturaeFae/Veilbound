@@ -1,0 +1,7 @@
+docs/0.1.62-validation.md
+gradle.properties
+src/main/java/dev/futurae/veilbound/client/VeilboundClient.java
+src/main/java/dev/futurae/veilbound/client/render/NoCloudsRenderer.java
+src/main/java/dev/futurae/veilbound/client/render/VeilBoundaryRenderer.java
+src/main/resources/assets/veilbound/shaders/core/veil_boundary_fog.fsh
+src/main/resources/data/veilbound/dimension_type/domain.json

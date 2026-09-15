@@ -1,0 +1,141 @@
+            dev.futurae.veilbound.domain.DomainRecord record,
+            ItemResource resource,
+            ServerPlayer player) {
+        if (resource == null || resource.isEmpty()) return false;
+        VeilStackKey key;
+        try {
+            key = NeoForgeVeilStackBridge.toKey(resource, player.registryAccess());
+        } catch (RuntimeException malformed) {
+            return false;
+        }
+        var value = runtime.matter().amount(key.itemId());
+        return key.componentData().isEmpty()
+                && record.matterTransmutation().knows(key.itemId())
+                && value.isPresent() && value.getAsLong() > 0;
+    }
+
+    private void toggleFavorite(ServerPlayer player, dev.futurae.veilbound.domain.DomainRecord record, ItemResource resource) {
+        if (resource == null || resource.isEmpty()) return;
+        VeilStackKey key;
+        try {
+            key = NeoForgeVeilStackBridge.toKey(resource, player.registryAccess());
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        var value = runtime.matter().amount(key.itemId());
+        if (!key.componentData().isEmpty() || !record.matterTransmutation().knows(key.itemId())
+                || value.isEmpty() || value.getAsLong() <= 0) return;
+        record.matterTransmutation().toggleFavorite(key.itemId());
+    }
+
+    private void synthesize(ServerPlayer player, dev.futurae.veilbound.domain.DomainRecord record,
+            ItemResource requestedResource, int requested) {
+        if (requestedResource == null || requestedResource.isEmpty() || requested <= 0) return;
+        VeilStackKey requestedKey;
+        try {
+            requestedKey = NeoForgeVeilStackBridge.toKey(requestedResource, player.registryAccess());
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        if (!requestedKey.componentData().isEmpty()) return;
+        ItemResource canonical = NeoForgeVeilStackBridge.toResource(VeilStackKey.plain(requestedKey.itemId()), player.registryAccess());
+        if (canonical.isEmpty()) return;
+
+        int desired = Math.min(Math.min(requested, VeilInventoryActionPayload.MAX_SYNTHESIS_QUANTITY), canonical.getMaxStackSize());
+        var synthesized = transmutation.synthesize(
+                record.state(), record.matterTransmutation(), runtime.matter(), requestedKey.itemId(), desired);
+        if (!synthesized.synthesized()) return;
+
+        ItemStack delivered = canonical.toStack((int) synthesized.itemCount());
+        int before = delivered.getCount();
+        player.getInventory().add(delivered);
+        int undelivered = delivered.getCount();
+        int actuallyDelivered = before - undelivered;
+        if (undelivered > 0) {
+            long refund = Math.multiplyExact((long) undelivered, synthesized.matterPerItem());
+            long restored = record.matterTransmutation().addMatter(refund);
+            if (restored != refund) throw new IllegalStateException("Could not refund undelivered Matter synthesis");
+        }
+        if (actuallyDelivered > 0) record.matterTransmutation().recordRecent(requestedKey.itemId());
+    }
+
+    private void withdrawStored(ServerPlayer player, dev.futurae.veilbound.inventory.VeilInventory inventory,
+            dev.futurae.veilbound.inventory.VeilStorageCapacity capacity, ItemResource resource, int requested) {
+        if (resource == null || resource.isEmpty() || requested <= 0) return;
+        VeilStackKey key;
+        try {
+            key = NeoForgeVeilStackBridge.toKey(resource, player.registryAccess());
+        } catch (RuntimeException malformed) {
+            return;
+        }
+        long extracted = inventory.extract(key, Math.min(requested, Integer.MAX_VALUE));
+        if (extracted <= 0) return;
+
+        ItemStack delivered = resource.toStack((int) extracted);
+        player.getInventory().add(delivered);
+        int remainder = delivered.getCount();
+        if (remainder > 0) {
+            long restored = inventory.insert(key, remainder, capacity);
+            if (restored != remainder) {
+                throw new IllegalStateException("Could not atomically restore undelivered Veil Inventory items");
+            }
+        }
+    }
+
+    public void sendSnapshot(ServerPlayer player, int requestedPage) {
+        sendSnapshot(player, requestedPage, "", MatterPatternPageService.SortMode.NAME_ASC, MatterPatternPageService.FilterMode.ALL);
+    }
+
+    public void sendSnapshot(
+            ServerPlayer player,
+            int requestedPage,
+            String query,
+            MatterPatternPageService.SortMode sortMode,
+            MatterPatternPageService.FilterMode filterMode) {
+        var access = runtime.veilInventoryAccess().ownerAccess(player.getUUID(), player.getUUID());
+        if (!access.allowed()) {
+            PacketDistributor.sendToPlayer(player, VeilInventorySnapshotPayload.denied(access.reason()));
+            return;
+        }
+        var record = runtime.domains().getRecord(player.getUUID()).orElse(null);
+        if (record == null) {
+            PacketDistributor.sendToPlayer(player, VeilInventorySnapshotPayload.denied("domain_not_found"));
+            return;
+        }
+        ensureTerminalMigration(record);
+
+        Map<String, String> patternDisplayNames = new LinkedHashMap<>();
+        for (String itemId : record.matterTransmutation().learnedItemIds()) {
+            var value = runtime.matter().amount(itemId);
+            if (value.isEmpty() || value.getAsLong() <= 0) continue;
+            ItemResource resource = NeoForgeVeilStackBridge.toResource(VeilStackKey.plain(itemId), player.registryAccess());
+            if (!resource.isEmpty()) patternDisplayNames.put(itemId, resource.getHoverName().getString());
+        }
+        Map<VeilStackKey, String> storedDisplayNames = new LinkedHashMap<>();
+        for (VeilStackKey key : record.veilInventory().contents().keySet()) {
+            var value = runtime.matter().amount(key.itemId());
+            if (value.isPresent() && value.getAsLong() > 0) continue;
+            ItemResource resource = NeoForgeVeilStackBridge.toResource(key, player.registryAccess());
+            if (!resource.isEmpty()) storedDisplayNames.put(key, resource.getHoverName().getString());
+        }
+        var page = terminalPages.page(
+                record.veilInventory(), record.matterTransmutation().learnedItemIds(), runtime.matter(),
+                record.matterTransmutation().storedMatter(), record.matterTransmutation().favoriteItemIds(),
+                record.matterTransmutation().recentItemIds(), storedDisplayNames, patternDisplayNames,
+                query, sortMode, filterMode, requestedPage, PAGE_SIZE);
+        var entries = new ArrayList<VeilInventorySnapshotPayload.Entry>(page.entries().size());
+        for (var entry : page.entries()) {
+            ItemResource resource = NeoForgeVeilStackBridge.toResource(entry.key(), player.registryAccess());
+            if (!resource.isEmpty()) {
+                entries.add(new VeilInventorySnapshotPayload.Entry(
+                        resource, entry.storedCount(), entry.matterCost(), entry.affordableCount(),
+                        entry.favorite(), entry.recentRank() != Integer.MAX_VALUE));
+            }
+        }
+        PacketDistributor.sendToPlayer(player, new VeilInventorySnapshotPayload(
+                true, "ok", page.page(), page.pageCount(), record.veilInventory().totalItems(), access.capacity().maxItems(),
+                record.veilInventory().distinctTypes(), access.capacity().maxTypes(),
+                true, true, record.matterTransmutation().storedMatter(),
+                patternDisplayNames.size(), page.matchingEntries(), entries));
+    }
+}

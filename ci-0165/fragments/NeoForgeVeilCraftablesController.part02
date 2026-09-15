@@ -1,0 +1,20 @@
+        StringBuilder out = new StringBuilder(entry.resultId()).append('|').append(entry.resultCount());
+        for (ItemResource resource : entry.grid()) out.append('|').append(resource);
+        return out.toString();
+    }
+
+    private record Candidate(
+            ItemResource resource, VeilStackKey key, String itemId, long matterCost,
+            boolean matterBased, boolean available, long availabilityHint) {}
+    private record CatalogEntry(
+            ItemResource result,
+            int resultCount,
+            String resultId,
+            String displayName,
+            long matterCost,
+            boolean craftable,
+            boolean patternsKnown,
+            long affordableCrafts,
+            List<ItemResource> grid,
+            List<Boolean> learnedGrid) {}
+}

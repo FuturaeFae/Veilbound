@@ -1,0 +1,9 @@
+--- a/src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
++++ b/src/main/java/dev/futurae/veilbound/block/VeilLanceBlock.java
+@@ -25,1 +25,2 @@
+-import net.minecraft.world.level.block.state.properties.DirectionProperty;
++import net.minecraft.world.level.block.state.properties.BlockStateProperties;
++import net.minecraft.world.level.block.state.properties.EnumProperty;
+@@ -34,1 +35,1 @@
+-    public static final DirectionProperty FACING = DirectionProperty.create("facing");
++    public static final EnumProperty<Direction> FACING = BlockStateProperties.FACING;

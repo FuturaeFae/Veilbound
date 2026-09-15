@@ -1,0 +1,244 @@
+name: Validate Veilbound 0.1.69 V5
+
+on:
+  push:
+    branches:
+      - dev/veilbound-0.1.48-armor-models
+    paths:
+      - 'ci-0169/**'
+      - '.github/workflows/validate-0.1.69-v5.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download validated 0.1.68 baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.68-dev-final
+          path: baseline-0168
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34309660337
+
+      - name: Reconstruct complete 0.1.69
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '931a7a78aff7c846a58df1f4bd7cd4db24efc134131a357ebf030393e089f41c  baseline-0168/Veilbound-0.1.68-dev-source.tar.xz' | sha256sum -c -
+          mkdir source-0169
+          tar -xJf baseline-0168/Veilbound-0.1.68-dev-source.tar.xz -C source-0169
+
+          base64 -d ci-0169/veil169-text.patch.gz.b64 | gzip -dc > veil169-text.patch
+          patch -p1 --batch -i "$GITHUB_WORKSPACE/veil169-text.patch" -d source-0169
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib
+          specs = [
+              ('ci-0169/refgenv5.part00', 16000, '221f80c3ab7d96faf5a8ea59db6cd299e2588cda91337aaf4a648aa1c1b9456c'),
+              ('ci-0169/refgenv5.part01', 16000, '10fa82ac7d8fa7e7c1b17fa36ae99692c86b150970f7d7c92d37044a05dd046a'),
+              ('ci-0169/refgenv5.part02', 5892, '1c1b6a592f6138b688d151b8f8b0ab0e9b73e83a1ffe8635b374aa151fe1c793'),
+          ]
+          chunks=[]
+          for name,size,expected in specs:
+              raw=Path(name).read_bytes().strip()
+              got=hashlib.sha256(raw).hexdigest()
+              if got != expected:
+                  repaired=None
+                  if len(raw) >= size and hashlib.sha256(raw[:size]).hexdigest() == expected:
+                      repaired=raw[:size]
+                      print(f'VEILBOUND_0169_CHUNK_REPAIR={name}:trim_tail:{len(raw)-size}')
+                  elif len(raw) >= size and hashlib.sha256(raw[-size:]).hexdigest() == expected:
+                      repaired=raw[-size:]
+                      print(f'VEILBOUND_0169_CHUNK_REPAIR={name}:trim_head:{len(raw)-size}')
+                  if repaired is None:
+                      raise SystemExit(f'chunk mismatch {name}: len={len(raw)} sha256={got}')
+                  raw=repaired
+              assert len(raw)==size
+              chunks.append(raw)
+          encoded=b''.join(chunks)
+          compressed=base64.b64decode(encoded, validate=True)
+          got_comp=hashlib.sha256(compressed).hexdigest()
+          expected_comp='2c4a575d14b44e6c8cea134e91c87fa64865facd0dde2c63f148d511a01c7922'
+          assert got_comp==expected_comp,(got_comp,expected_comp)
+          script=gzip.decompress(compressed)
+          got_script=hashlib.sha256(script).hexdigest()
+          expected_script='9105a0f06e4dcd3786ef7c4ed09ecb673c4b34b85918ba5b7ebcdb1c52be8fe2'
+          assert got_script==expected_script,(got_script,expected_script)
+          Path('generate-reference-assets-v5.py').write_bytes(script)
+          print('VEILBOUND_0169_REFERENCE_GENERATOR=PASS')
+          PY
+          python3 generate-reference-assets-v5.py source-0169 | tee 00-reference-assets.log
+          grep -q 'VEILBOUND_0169_REFERENCE_V5=PASS' 00-reference-assets.log
+
+          base64 -d ci-0169/apply-storage-blocks.py.gz.b64 | gzip -dc > apply-storage-blocks.py
+          python3 apply-storage-blocks.py source-0169 | tee 01-storage-blocks.log
+          grep -q 'VEILBOUND_0169_STORAGE_BLOCKS=PASS' 01-storage-blocks.log
+          grep -q '^mod_version=0.1.69-dev$' source-0169/gradle.properties
+
+      - name: Static audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=source-0169
+          grep -q 'super(menu, inventory, title, 248, 190)' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DimensionalTransducerScreen.java"
+          grep -q 'Power Telemetry' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.java"
+          grep -q 'PANEL_WIDTH = 276' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'GRID_ROWS = 5' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'Assembler' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'PAGE_SIZE = 45' "$ROOT/src/main/java/dev/futurae/veilbound/network/VeilCraftablesSnapshotPayload.java"
+          grep -q 'PAGE_SIZE = 45' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java"
+          grep -q 'Dimensional Energy' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java"
+          grep -q 'noOcclusion' "$ROOT/src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java"
+          python3 - <<'PY'
+          import json, struct
+          from pathlib import Path
+          root=Path('source-0169')
+          tex=root/'src/main/resources/assets/veilbound/textures'
+          expected={
+            'item/dimensional_shard.png':(32,128),'item/resonant_crystal.png':(32,128),
+            'item/phase_mote.png':(32,128),'item/causal_fragment.png':(32,128),'item/genesis_seed.png':(32,128),
+            'block/dimensional_shard_ore.png':(32,128),'block/deepslate_dimensional_shard_ore.png':(32,128),
+            'block/resonant_accretion.png':(32,128),'block/phase_accretion.png':(32,128),'block/causal_accretion.png':(32,128),
+            'block/dynamo_front.png':(32,128),'block/dynamo_side.png':(32,32),'block/dynamo_top.png':(32,32),
+            'block/dimensional_block.png':(32,128),'block/resonant_block.png':(32,128),
+            'block/phase_block.png':(32,128),'block/causal_block.png':(32,128)}
+          for rel,dims in expected.items():
+            raw=(tex/rel).read_bytes()
+            assert raw[:8]==b'\x89PNG\r\n\x1a\n', rel
+            assert struct.unpack('>II',raw[16:24])==dims,(rel,struct.unpack('>II',raw[16:24]),dims)
+          for tier in ('dimensional','resonant','phase','causal'):
+            model=json.loads((root/f'src/main/resources/assets/veilbound/models/block/{tier}_transducer.json').read_text())
+            assert len(model.get('elements',[]))>=3
+            for elem in model['elements']:
+              for face,spec in elem.get('faces',{}).items():
+                if face!='down': assert 'cullface' not in spec
+          pairs=(('dimensional','dimensional_shard'),('resonant','resonant_crystal'),('phase','phase_mote'),('causal','causal_fragment'))
+          blocks=(root/'src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java').read_text()
+          for name,item in pairs:
+            assert f'"{name}_block"' in blocks
+            comp=json.loads((root/f'src/main/resources/data/veilbound/recipe/{name}_block.json').read_text())
+            unpack=json.loads((root/f'src/main/resources/data/veilbound/recipe/{name}_block_unpacking.json').read_text())
+            assert comp['pattern']==['XXX','XXX','XXX'] and comp['key']['X']==f'veilbound:{item}'
+            assert unpack['result']=={'id':f'veilbound:{item}','count':9}
+          print('VEILBOUND_0169_V5_STATIC_AUDIT=PASS')
+          PY
+
+      - name: Package source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0169 -cJf Veilbound-0.1.69-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./run' .
+          test -s Veilbound-0.1.69-dev-source.tar.xz
+
+      - name: Build exact JAR
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0169.log") 2>&1
+          set -euo pipefail
+          cd source-0169
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.69-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.69-dev.jar
+          for entry in \
+            dev/futurae/veilbound/client/screen/VeilInventoryScreen.class \
+            dev/futurae/veilbound/client/screen/DimensionalTransducerScreen.class \
+            dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.class \
+            dev/futurae/veilbound/client/screen/DomainControlsScreen.class \
+            assets/veilbound/textures/block/dimensional_block.png \
+            assets/veilbound/textures/block/resonant_block.png \
+            assets/veilbound/textures/block/phase_block.png \
+            assets/veilbound/textures/block/causal_block.png \
+            data/veilbound/recipe/dimensional_block.json \
+            data/veilbound/recipe/resonant_block.json \
+            data/veilbound/recipe/phase_block.json \
+            data/veilbound/recipe/causal_block.json; do
+            unzip -Z1 Veilbound-0.1.69-dev.jar | grep -q "$entry"
+          done
+          echo VEILBOUND_0169_V5_JAR_AUDIT=PASS | tee Veilbound-0.1.69-dev-audit.txt
+
+      - name: NeoForge 26.2.0.75 exact-JAR smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0169.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0169"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.69-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods" && cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo eula=true > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.69 V5 smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.69-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 & SERVER_PID=$!
+          OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then OK=1; break; fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+          if [ "$OK" -ne 1 ]; then tail -n 250 "$LOG"; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          echo VEILBOUND_0169_V5_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.69-dev.jar Veilbound-0.1.69-dev-source.tar.xz Veilbound-0.1.69-dev-server-smoke.log > Veilbound-0.1.69-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.69-dev-v5-diagnostics
+          path: |
+            00-reference-assets.log
+            01-storage-blocks.log
+            03-gradle-build-0169.log
+            04-server-setup-0169.log
+            Veilbound-0.1.69-dev.jar
+            Veilbound-0.1.69-dev-source.tar.xz
+            Veilbound-0.1.69-dev-audit.txt
+            Veilbound-0.1.69-dev-SHA256SUMS.txt
+            Veilbound-0.1.69-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.69-dev-v5-final
+          path: |
+            Veilbound-0.1.69-dev.jar
+            Veilbound-0.1.69-dev-source.tar.xz
+            Veilbound-0.1.69-dev-audit.txt
+            Veilbound-0.1.69-dev-SHA256SUMS.txt
+            Veilbound-0.1.69-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

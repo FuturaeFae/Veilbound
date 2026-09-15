@@ -1,0 +1,220 @@
+name: Validate Veilbound 0.1.57
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-0157:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact 0.1.56 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.56-dev-diagnostics
+          path: baseline-0156
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34078211138
+
+      - name: Reconstruct 0.1.57 and apply worn armor animation
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "48072ba5db57452c0405fc0605a611fd862cd69c0e81a242090b0f27d2888151  baseline-0156/Veilbound-0.1.56-dev-source.tar.xz" | sha256sum -c -
+          echo "da898db59ee60f5d221c4ecd6c92b3c699d64742873eb35dcf6b778ea66236e6  ci-0157/worn-animation-0157.patch" | sha256sum -c -
+          mkdir -p source-0157
+          tar -xJf baseline-0156/Veilbound-0.1.56-dev-source.tar.xz -C source-0157
+          patch -p1 -d source-0157 < ci-0157/worn-animation-0157.patch
+          grep -q '^mod_version=0.1.56-dev$' source-0157/gradle.properties
+          sed -i 's/^mod_version=0.1.56-dev$/mod_version=0.1.57-dev/' source-0157/gradle.properties
+          grep -q '^mod_version=0.1.57-dev$' source-0157/gradle.properties
+
+          mkdir -p source-0157/docs
+          cat > source-0157/docs/0.1.57-validation.md <<'EOF'
+          # Veilbound 0.1.57 validation
+
+          0.1.57 builds directly from the checksum-locked 0.1.56 reconstructed source snapshot.
+          It adds autonomous motion to the equipped custom armor geometry for Phaseweave, Causal,
+          and Sovereign armor while preserving the existing animated inventory textures and slot isolation.
+
+          Validation requires Java 25 compilation, packaged-class/resource audits, and an exact-JAR
+          NeoForge 26.2.0.75 dedicated-server startup reaching Minecraft's `Done` readiness marker.
+          EOF
+
+      - name: Audit 0.1.57 source and retained resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=source-0157/src/main/java/dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.java
+          grep -q 'applyWornAnimation' "$SRC"
+          grep -q 'ArmorMotion.PHASEWEAVE' "$SRC"
+          grep -q 'ArmorMotion.CAUSAL' "$SRC"
+          grep -q 'ArmorMotion.SOVEREIGN' "$SRC"
+          grep -q 'System.nanoTime()' "$SRC"
+          grep -q 'phaseweave_crownrail' "$SRC"
+          grep -q 'causal_temporal_ridge' "$SRC"
+          grep -q 'sovereign_worldline_back' "$SRC"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, struct
+
+          resources = Path('source-0157/src/main/resources')
+          assets = resources / 'assets/veilbound'
+          recipes = resources / 'data/veilbound/veilbound/engineering_recipes'
+          json_files = list(resources.rglob('*.json'))
+          mcmeta_files = list(resources.rglob('*.mcmeta'))
+          for path in json_files + mcmeta_files:
+              json.loads(path.read_text(encoding='utf-8'))
+          assert len(json_files) >= 627, len(json_files)
+          assert len(list(recipes.glob('*.json'))) == 120
+          assert len(list((assets / 'textures/item').glob('*.png'))) == 110
+          assert len(list((assets / 'textures/block').glob('*.png'))) == 32
+          assert len(list(assets.rglob('*.png.mcmeta'))) == 75
+          threshold = assets / 'textures/block/threshold_frame.png'
+          data = threshold.read_bytes()
+          assert data[:8] == b'\x89PNG\r\n\x1a\n'
+          assert struct.unpack('>II', data[16:24]) == (32, 256)
+          anim = json.loads((assets / 'textures/block/threshold_frame.png.mcmeta').read_text(encoding='utf-8'))['animation']
+          assert anim['frametime'] == 3 and anim['interpolate'] is True
+          print(f'VEILBOUND_0157_RESOURCE_AUDIT=PASS json={len(json_files)} mcmeta={len(mcmeta_files)} recipes=120')
+          PY
+          echo VEILBOUND_0157_SOURCE_AUDIT=PASS
+
+      - name: Package 0.1.57 source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C source-0157 -cJf Veilbound-0.1.57-dev-source.tar.xz \
+            --exclude='./build' \
+            --exclude='./.gradle' \
+            --exclude='./.vanilla' \
+            --exclude='./run' \
+            .
+          test -s Veilbound-0.1.57-dev-source.tar.xz
+
+      - name: Java 25 Gradle build and packaged JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0157.log") 2>&1
+          set -euo pipefail
+          cd source-0157
+          java -version
+          gradle --version
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.57-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.57-dev.jar
+          unzip -Z1 Veilbound-0.1.57-dev.jar | grep -q 'dev/futurae/veilbound/client/render/armor/VeilboundArmorModels.class'
+          unzip -Z1 Veilbound-0.1.57-dev.jar | grep -q 'dev/futurae/veilbound/client/render/VeilLanceRenderer.class'
+          unzip -Z1 Veilbound-0.1.57-dev.jar | grep -q 'dev/futurae/veilbound/client/render/EngineeringMonumentRenderer.class'
+          unzip -Z1 Veilbound-0.1.57-dev.jar | grep -q 'assets/veilbound/textures/block/threshold_frame.png.mcmeta'
+          javap -classpath Veilbound-0.1.57-dev.jar -p dev.futurae.veilbound.client.render.armor.VeilboundArmorModels | grep -q 'applyWornAnimation'
+          RECIPES="$(unzip -Z1 Veilbound-0.1.57-dev.jar | grep -c '^data/veilbound/veilbound/engineering_recipes/.*\.json$')"
+          test "$RECIPES" -eq 120
+          echo "VEILBOUND_0157_JAR_AUDIT=PASS recipes=$RECIPES worn_armor_animation=present" | tee Veilbound-0.1.57-dev-audit.txt
+
+      - name: Exact-JAR NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0157.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0157"
+          LOG="$GITHUB_WORKSPACE/Veilbound-0.1.57-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"
+          cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo 'eula=true' > eula.txt
+          cat > server.properties <<'EOF'
+          online-mode=false
+          server-port=25565
+          motd=Veilbound 0.1.57 CI smoke
+          EOF
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.57-dev.jar" mods/
+
+          setsid bash run.sh nogui > "$LOG" 2>&1 &
+          SERVER_PID=$!
+          SMOKE_OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then
+              SMOKE_OK=1
+              break
+            fi
+            if grep -Eq 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then
+              break
+            fi
+            sleep 1
+          done
+
+          SMOKE_STATUS=1
+          if [ "$SMOKE_OK" -eq 1 ]; then SMOKE_STATUS=0; fi
+          kill -TERM -- -"$SERVER_PID" 2>/dev/null || true
+          for _ in $(seq 1 10); do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          kill -KILL -- -"$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+
+          if [ "$SMOKE_STATUS" -ne 0 ]; then
+            echo VEILBOUND_0157_SERVER_SMOKE=FAIL
+            tail -n 200 "$LOG" || true
+            exit 1
+          fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          ! grep -E 'ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"
+          echo VEILBOUND_0157_SERVER_SMOKE=PASS
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.57-dev.jar Veilbound-0.1.57-dev-source.tar.xz Veilbound-0.1.57-dev-server-smoke.log > Veilbound-0.1.57-dev-SHA256SUMS.txt
+
+      - name: Upload diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.57-dev-diagnostics
+          path: |
+            03-gradle-build-0157.log
+            04-server-setup-0157.log
+            Veilbound-0.1.57-dev.jar
+            Veilbound-0.1.57-dev-source.tar.xz
+            Veilbound-0.1.57-dev-audit.txt
+            Veilbound-0.1.57-dev-SHA256SUMS.txt
+            Veilbound-0.1.57-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload validated final artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.57-dev-final
+          path: |
+            Veilbound-0.1.57-dev.jar
+            Veilbound-0.1.57-dev-source.tar.xz
+            Veilbound-0.1.57-dev-audit.txt
+            Veilbound-0.1.57-dev-SHA256SUMS.txt
+            Veilbound-0.1.57-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

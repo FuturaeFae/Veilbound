@@ -1,0 +1,140 @@
+        MatterTransmutationState transmutation = record.matterTransmutation();
+
+        List<ItemStack> stacks = new ArrayList<>(VeilCraftingRequestPayload.GRID_SIZE);
+        List<VeilCraftingService.IngredientRequest> requestedIngredients = new ArrayList<>();
+        for (ItemResource resource : proposedGrid) {
+            ItemResource normalized = resource == null ? ItemResource.EMPTY : resource;
+            if (normalized.isEmpty()) {
+                stacks.add(ItemStack.EMPTY);
+                continue;
+            }
+            ItemStack stack = normalized.toStack(1);
+            if (stack.isEmpty()) return Evaluation.denied("invalid_grid_item");
+            stacks.add(stack);
+            VeilStackKey key;
+            try {
+                key = NeoForgeVeilStackBridge.toKey(normalized, player.registryAccess());
+            } catch (RuntimeException malformed) {
+                return Evaluation.denied("invalid_grid_item");
+            }
+
+            List<VeilCraftingService.SynthesisCandidate> synthesis = List.of();
+            if (key.componentData().isEmpty()) {
+                var value = runtime.matter().amount(key.itemId());
+                if (value.isPresent() && value.getAsLong() > 0) {
+                    synthesis = List.of(new VeilCraftingService.SynthesisCandidate(
+                            VeilStackKey.plain(key.itemId()), value.getAsLong()));
+                }
+            }
+            requestedIngredients.add(new VeilCraftingService.IngredientRequest(
+                    List.of(key), craftQuantity, synthesis));
+        }
+        if (requestedIngredients.isEmpty()) return Evaluation.denied("empty_grid");
+
+        CraftingInput input = CraftingInput.ofPositioned(3, 3, stacks).input();
+        RecipeHolder<? extends CraftingRecipe> holder = player.level().recipeAccess()
+                .getRecipeFor(RecipeType.CRAFTING, input, player.level())
+                .orElse(null);
+        if (holder == null) return Evaluation.denied("no_recipe");
+
+        CraftingRecipe recipe = holder.value();
+        ItemStack result = recipe.assemble(input);
+        if (result == null || result.isEmpty() || result.getCount() <= 0) return Evaluation.denied("empty_result");
+
+        PlayerIngredientPlan playerPlan = planPlayerConsumption(player, requestedIngredients);
+        var preview = crafting.previewWithMatter(
+                state, access.inventory(), access.capacity(), playerPlan.remainingIngredients(), List.of(), transmutation);
+        if (!preview.crafted()) return Evaluation.denied(preview.reason());
+
+        List<ItemStack> deliveries = new ArrayList<>();
+        deliveries.add(result.copy());
+        NonNullList<ItemStack> remainders = recipe.getRemainingItems(input);
+        if (remainders != null) {
+            for (ItemStack remainder : remainders) {
+                if (remainder != null && !remainder.isEmpty() && remainder.getCount() > 0) {
+                    deliveries.add(remainder.copy());
+                }
+            }
+        }
+
+        ItemResource resultResource = ItemResource.of(result);
+        if (resultResource.isEmpty()) return Evaluation.denied("invalid_result");
+        int previewCount;
+        try {
+            previewCount = Math.multiplyExact(result.getCount(), craftQuantity);
+        } catch (ArithmeticException overflow) {
+            return Evaluation.denied("result_count_overflow");
+        }
+        return new Evaluation(
+                true, "ok", state, access.inventory(), access.capacity(), transmutation,
+                playerPlan.remainingIngredients(), playerPlan.slotConsumption(),
+                List.copyOf(deliveries), resultResource, previewCount, craftQuantity);
+    }
+
+    private PlayerIngredientPlan planPlayerConsumption(
+            ServerPlayer player,
+            List<VeilCraftingService.IngredientRequest> requestedIngredients) {
+        int limit = Math.min(PLAYER_STORAGE_SLOTS, player.getInventory().getContainerSize());
+        int[] remainingInSlot = new int[limit];
+        VeilStackKey[] keys = new VeilStackKey[limit];
+        for (int slot = 0; slot < limit; slot++) {
+            ItemStack stack = player.getInventory().getItem(slot);
+            if (stack.isEmpty()) continue;
+            remainingInSlot[slot] = stack.getCount();
+            try {
+                keys[slot] = NeoForgeVeilStackBridge.toKey(ItemResource.of(stack), player.registryAccess());
+            } catch (RuntimeException malformed) {
+                remainingInSlot[slot] = 0;
+            }
+        }
+
+        LinkedHashMap<Integer, Integer> slotConsumption = new LinkedHashMap<>();
+        List<VeilCraftingService.IngredientRequest> remaining = new ArrayList<>();
+        for (VeilCraftingService.IngredientRequest request : requestedIngredients) {
+            long need = request.count();
+            for (int slot = 0; slot < limit && need > 0; slot++) {
+                if (remainingInSlot[slot] <= 0 || keys[slot] == null) continue;
+                boolean accepted = false;
+                for (VeilStackKey acceptable : request.acceptableStacks()) {
+                    if (acceptable.equals(keys[slot])) {
+                        accepted = true;
+                        break;
+                    }
+                }
+                if (!accepted) continue;
+                int take = (int) Math.min((long) remainingInSlot[slot], need);
+                remainingInSlot[slot] -= take;
+                need -= take;
+                slotConsumption.merge(slot, take, Integer::sum);
+            }
+            if (need > 0) {
+                remaining.add(new VeilCraftingService.IngredientRequest(
+                        request.acceptableStacks(), need, request.synthesisCandidates()));
+            }
+        }
+        return new PlayerIngredientPlan(Map.copyOf(slotConsumption), List.copyOf(remaining));
+    }
+
+    private record PlayerIngredientPlan(
+            Map<Integer, Integer> slotConsumption,
+            List<VeilCraftingService.IngredientRequest> remainingIngredients) {}
+
+    private record Evaluation(
+            boolean craftable,
+            String reason,
+            DomainState state,
+            dev.futurae.veilbound.inventory.VeilInventory inventory,
+            dev.futurae.veilbound.inventory.VeilStorageCapacity capacity,
+            MatterTransmutationState transmutation,
+            List<VeilCraftingService.IngredientRequest> storageIngredients,
+            Map<Integer, Integer> playerConsumption,
+            List<ItemStack> deliveries,
+            ItemResource resultResource,
+            int resultCount,
+            int craftQuantity) {
+        private static Evaluation denied(String reason) {
+            return new Evaluation(false, reason, null, null, null, null,
+                    List.of(), Map.of(), List.of(), ItemResource.EMPTY, 0, 1);
+        }
+    }
+}

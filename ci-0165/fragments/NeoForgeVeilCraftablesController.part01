@@ -1,0 +1,152 @@
+            availableCounts.put(candidate.key(), candidate.availabilityHint());
+            available = candidate.availabilityHint() >= needed;
+            if (candidate.matterBased()) cost = saturatedAdd(cost, candidate.matterCost());
+            availableGrid.set(slotIndex, available);
+            allAvailable &= available;
+            slotIndex++;
+        }
+        return finish(display.result(), context, grid, availableGrid, cost, allAvailable, storedMatter, storedNeeds, availableCounts);
+    }
+
+    private CatalogEntry finish(
+            SlotDisplay resultDisplay,
+            ContextMap context,
+            List<ItemResource> grid,
+            List<Boolean> availableGrid,
+            long matterCost,
+            boolean allAvailable,
+            long storedMatter,
+            Map<VeilStackKey, Integer> storedNeeds,
+            Map<VeilStackKey, Long> availableCounts) {
+        List<ItemStack> results = resultDisplay.resolveForStacks(context).stream()
+                .filter(stack -> stack != null && !stack.isEmpty() && stack.getCount() > 0)
+                .toList();
+        if (results.size() != 1) return null;
+        ItemStack resultStack = results.getFirst();
+        ItemResource result = ItemResource.of(resultStack);
+        if (result.isEmpty()) return null;
+        String resultId = BuiltInRegistries.ITEM.getKey(resultStack.getItem()).toString();
+        String displayName = resultStack.getHoverName().getString();
+
+        long affordableCrafts = matterCost > 0 ? storedMatter / matterCost : Long.MAX_VALUE;
+        for (var need : storedNeeds.entrySet()) {
+            affordableCrafts = Math.min(affordableCrafts,
+                    availableCounts.getOrDefault(need.getKey(), 0L) / need.getValue());
+        }
+        if (affordableCrafts == Long.MAX_VALUE) affordableCrafts = 0L;
+        boolean craftable = allAvailable && affordableCrafts > 0;
+        return new CatalogEntry(result, resultStack.getCount(), resultId, displayName, matterCost,
+                craftable, allAvailable, affordableCrafts, List.copyOf(grid), List.copyOf(availableGrid));
+    }
+
+    private Candidate choose(
+            SlotDisplay rawDisplay,
+            ContextMap context,
+            Set<String> learned,
+            long storedMatter,
+            VeilInventory inventory,
+            ServerPlayer player) {
+        SlotDisplay input = rawDisplay instanceof SlotDisplay.WithRemainder remainder ? remainder.input() : rawDisplay;
+        Map<String, Candidate> unique = new LinkedHashMap<>();
+        for (ItemStack stack : input.resolveForStacks(context)) {
+            if (stack == null || stack.isEmpty()) continue;
+            ItemResource resource = ItemResource.of(stack.copyWithCount(1));
+            VeilStackKey key;
+            try {
+                key = NeoForgeVeilStackBridge.toKey(resource, player.registryAccess());
+            } catch (RuntimeException malformed) {
+                continue;
+            }
+            String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            var value = runtime.matter().amount(itemId);
+            Candidate candidate;
+            long playerCount = countInPlayerInventory(player, key);
+            if (value.isPresent() && value.getAsLong() > 0 && key.componentData().isEmpty()) {
+                long cost = value.getAsLong();
+                long matterCount = learned.contains(itemId) ? storedMatter / cost : 0L;
+                long hint = saturatedAdd(playerCount, matterCount);
+                candidate = new Candidate(resource, key, itemId, cost, true, hint > 0, hint);
+            } else if (value.isEmpty() || value.getAsLong() <= 0) {
+                long count = saturatedAdd(inventory.count(key), playerCount);
+                candidate = new Candidate(resource, key, itemId, 0L, false, count > 0, count);
+            } else {
+                // Component-bearing valued states cannot be synthesized, but a matching physical
+                // stack in the player's inventory is a valid crafting ingredient.
+                candidate = new Candidate(resource, key, itemId, 0L, false, playerCount > 0, playerCount);
+            }
+            String dedupeKey = itemId + "\u0000" + key.componentData();
+            unique.merge(dedupeKey, candidate, (a, b) -> better(a, b) ? a : b);
+        }
+        return unique.values().stream()
+                .min(Comparator.comparing(Candidate::available).reversed()
+                        .thenComparing(Comparator.comparingLong(Candidate::availabilityHint).reversed())
+                        .thenComparingLong(Candidate::matterCost)
+                        .thenComparing(Candidate::itemId))
+                .orElse(null);
+    }
+
+    private static long countInPlayerInventory(ServerPlayer player, VeilStackKey key) {
+        long total = 0L;
+        int limit = Math.min(36, player.getInventory().getContainerSize());
+        for (int slot = 0; slot < limit; slot++) {
+            ItemStack stack = player.getInventory().getItem(slot);
+            if (stack.isEmpty()) continue;
+            try {
+                VeilStackKey candidate = NeoForgeVeilStackBridge.toKey(ItemResource.of(stack), player.registryAccess());
+                if (key.equals(candidate)) total = saturatedAdd(total, stack.getCount());
+            } catch (RuntimeException ignored) { }
+        }
+        return total;
+    }
+
+    private static boolean matches(CatalogEntry entry, String query) {
+        if (query == null || query.isBlank()) return true;
+        String q = query.trim().toLowerCase(Locale.ROOT);
+        if (q.startsWith("@")) {
+            int colon = entry.resultId().indexOf(':');
+            String namespace = colon < 0 ? "minecraft" : entry.resultId().substring(0, colon);
+            return namespace.contains(q.substring(1));
+        }
+        return entry.resultId().toLowerCase(Locale.ROOT).contains(q)
+                || entry.displayName().toLowerCase(Locale.ROOT).contains(q);
+    }
+
+    private static Comparator<CatalogEntry> comparator(MatterPatternPageService.SortMode mode) {
+        Comparator<CatalogEntry> name = Comparator.comparing(CatalogEntry::displayName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(CatalogEntry::resultId);
+        Comparator<CatalogEntry> cost = Comparator.comparingLong(CatalogEntry::matterCost)
+                .thenComparing(CatalogEntry::displayName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(CatalogEntry::resultId);
+        return switch (mode == null ? MatterPatternPageService.SortMode.NAME_ASC : mode) {
+            case NAME_ASC -> name;
+            case NAME_DESC -> name.reversed();
+            case COST_ASC -> cost;
+            case COST_DESC -> cost.reversed();
+        };
+    }
+
+    private static boolean better(Candidate a, Candidate b) {
+        if (a.available() != b.available()) return a.available();
+        if (a.availabilityHint() != b.availabilityHint()) return a.availabilityHint() > b.availabilityHint();
+        if (a.matterCost() != b.matterCost()) return a.matterCost() < b.matterCost();
+        return a.itemId().compareTo(b.itemId()) <= 0;
+    }
+
+    private static List<ItemResource> emptyGrid() {
+        ArrayList<ItemResource> grid = new ArrayList<>(9);
+        for (int i = 0; i < 9; i++) grid.add(ItemResource.EMPTY);
+        return grid;
+    }
+
+    private static List<Boolean> emptyLearnedGrid() {
+        ArrayList<Boolean> grid = new ArrayList<>(9);
+        for (int i = 0; i < 9; i++) grid.add(true);
+        return grid;
+    }
+
+    private static long saturatedAdd(long a, long b) {
+        if (a >= Long.MAX_VALUE - b) return Long.MAX_VALUE;
+        return a + b;
+    }
+
+    private static String signature(CatalogEntry entry) {

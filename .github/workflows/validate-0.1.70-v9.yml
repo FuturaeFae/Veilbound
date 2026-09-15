@@ -1,0 +1,154 @@
+name: Validate Veilbound 0.1.70 V9
+
+on:
+  push:
+    branches: [dev/veilbound-0.1.48-armor-models]
+    paths:
+      - 'ci-0170-v8/**'
+      - '.github/workflows/validate-0.1.70-v9.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+      - name: Download validated 0.1.69 baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.69-dev-v6-final
+          path: baseline-0169
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34419246902
+      - name: Reconstruct 0.1.70
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '4ca2719b81c1271c24663a7ba8459acb59dea00c8fdbf0dd4551f23de17e01c8  baseline-0169/Veilbound-0.1.69-dev-source.tar.xz' | sha256sum -c -
+          tar -tzf ci-0170-v8/overlay.tar.gz >/dev/null
+          mkdir source-0170
+          tar -xJf baseline-0169/Veilbound-0.1.69-dev-source.tar.xz -C source-0170
+          tar -xzf ci-0170-v8/overlay.tar.gz -C source-0170
+          rm -f source-0170/src/main/resources/assets/veilbound/textures/block/{dimensional,resonant,phase,causal}_transducer_core.png.mcmeta
+          grep -q '^mod_version=0.1.70-dev$' source-0170/gradle.properties
+          sha256sum ci-0170-v8/overlay.tar.gz | tee overlay-sha256.txt
+          echo VEILBOUND_0170_V9_RECONSTRUCTION=PASS
+      - name: Install Pillow for resource audit
+        run: python3 -m pip install --user pillow
+      - name: Audit resources and approved custom transducer models
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json
+          r=Path('source-0170/src/main/resources')
+          t=r/'assets/veilbound/textures'
+          for n in ('dimensional_shard','resonant_crystal','phase_mote','causal_fragment','genesis_seed'):
+              im=Image.open(t/'item'/f'{n}.png').convert('RGBA')
+              assert im.size==(32,128),(n,im.size)
+              assert min(im.getchannel('A').getdata())==0,(n,'item background is not transparent')
+          for n in ('dimensional_shard_ore','deepslate_dimensional_shard_ore','resonant_accretion','phase_accretion','causal_accretion','dimensional_block','resonant_block','phase_block','causal_block','void_anchor_top','void_anchor_side','void_anchor_bottom'):
+              im=Image.open(t/'block'/f'{n}.png').convert('RGBA')
+              assert im.size==(32,128),(n,im.size)
+              assert min(im.getchannel('A').getdata())==255,(n,'block has transparent pixels')
+          for n in ('dimensional_block','resonant_block','phase_block','causal_block'):
+              assert (r/'assets/veilbound/items'/f'{n}.json').is_file()
+              assert (r/'assets/veilbound/models/item'/f'{n}.json').is_file()
+              assert (r/'data/veilbound/recipe'/f'{n}.json').is_file()
+              assert (r/'data/veilbound/recipe'/f'{n}_unpacking.json').is_file()
+          for tier in ('dimensional','resonant','phase','causal'):
+              m=json.loads((r/'assets/veilbound/models/block'/f'{tier}_transducer.json').read_text())
+              assert len(m.get('elements',[]))>=3,tier
+              assert not (len(m['elements'])==1 and m['elements'][0].get('from')==[0,0,0] and m['elements'][0].get('to')==[16,16,16]),tier
+          print('VEILBOUND_0170_V9_RESOURCE_AUDIT=PASS')
+          PY
+          grep -q 'PANEL_WIDTH = 276' source-0170/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java
+          grep -q 'GRID_ROWS = 5' source-0170/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java
+          grep -q 'noOcclusion' source-0170/src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java
+      - name: Package source
+        run: tar -C source-0170 -cJf Veilbound-0.1.70-dev-source.tar.xz --exclude='./build' --exclude='./.gradle' --exclude='./run' .
+      - name: Gradle Java 25 build and packaged-JAR audit
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/03-gradle-build-0170.log") 2>&1
+          set -euo pipefail
+          cd source-0170
+          gradle --no-daemon --stacktrace clean check jar
+          JAR="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' -print -quit)"
+          test -n "$JAR"
+          cp "$JAR" "$GITHUB_WORKSPACE/Veilbound-0.1.70-dev.jar"
+          cd "$GITHUB_WORKSPACE"
+          unzip -t Veilbound-0.1.70-dev.jar
+          unzip -Z1 Veilbound-0.1.70-dev.jar | grep -Eq '^META-INF/(neoforge\.mods\.toml|mods\.toml)$'
+          unzip -Z1 Veilbound-0.1.70-dev.jar | grep -qx 'dev/futurae/veilbound/Veilbound.class'
+          for e in assets/veilbound/items/dimensional_block.json assets/veilbound/items/resonant_block.json assets/veilbound/items/phase_block.json assets/veilbound/items/causal_block.json assets/veilbound/textures/item/dimensional_shard.png assets/veilbound/textures/block/dimensional_shard_ore.png assets/veilbound/textures/block/phase_accretion.png assets/veilbound/textures/block/causal_accretion.png assets/veilbound/textures/block/void_anchor_top.png assets/veilbound/models/block/dimensional_transducer.json; do unzip -Z1 Veilbound-0.1.70-dev.jar | grep -qx "$e"; done
+          echo VEILBOUND_0170_V9_JAR_AUDIT=PASS | tee Veilbound-0.1.70-dev-audit.txt
+      - name: Exact NeoForge 26.2.0.75 server smoke
+        shell: bash
+        run: |
+          exec > >(tee "$GITHUB_WORKSPACE/04-server-setup-0170.log") 2>&1
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/server-0170"; LOG="$GITHUB_WORKSPACE/Veilbound-0.1.70-dev-server-smoke.log"
+          mkdir -p "$SERVER/mods"; cd "$SERVER"
+          curl -fsSL -o neoforge-installer.jar https://maven.neoforged.net/releases/net/neoforged/neoforge/26.2.0.75/neoforge-26.2.0.75-installer.jar
+          java -jar neoforge-installer.jar --installServer
+          echo eula=true > eula.txt
+          printf 'online-mode=false\nserver-port=25565\nmotd=Veilbound 0.1.70 V9 smoke\n' > server.properties
+          cp "$GITHUB_WORKSPACE/Veilbound-0.1.70-dev.jar" mods/
+          setsid bash run.sh nogui > "$LOG" 2>&1 & PID=$!
+          OK=0
+          for _ in $(seq 1 180); do
+            if grep -Eq 'Done \([0-9.]+s\)!' "$LOG"; then OK=1; break; fi
+            if grep -Eq 'Invalid mod file|ModLoadingException|Exception in thread "main"|Crash report|Failed to start the minecraft server|Encountered an unexpected exception' "$LOG"; then break; fi
+            sleep 1
+          done
+          kill -TERM -- -"$PID" 2>/dev/null || true; sleep 2; kill -KILL -- -"$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true
+          if [ "$OK" -ne 1 ]; then tail -n 300 "$LOG"; exit 1; fi
+          grep -E 'Done \([0-9.]+s\)!' "$LOG"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum Veilbound-0.1.70-dev.jar Veilbound-0.1.70-dev-source.tar.xz Veilbound-0.1.70-dev-server-smoke.log > Veilbound-0.1.70-dev-SHA256SUMS.txt
+          echo VEILBOUND_0170_V9_SERVER_SMOKE=PASS
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.70-dev-v9-diagnostics
+          path: |
+            overlay-sha256.txt
+            03-gradle-build-0170.log
+            04-server-setup-0170.log
+            Veilbound-0.1.70-dev.jar
+            Veilbound-0.1.70-dev-source.tar.xz
+            Veilbound-0.1.70-dev-audit.txt
+            Veilbound-0.1.70-dev-SHA256SUMS.txt
+            Veilbound-0.1.70-dev-server-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload validated final build
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.70-dev-v9-final
+          path: |
+            Veilbound-0.1.70-dev.jar
+            Veilbound-0.1.70-dev-source.tar.xz
+            Veilbound-0.1.70-dev-audit.txt
+            Veilbound-0.1.70-dev-SHA256SUMS.txt
+            Veilbound-0.1.70-dev-server-smoke.log
+          if-no-files-found: error
+          retention-days: 30

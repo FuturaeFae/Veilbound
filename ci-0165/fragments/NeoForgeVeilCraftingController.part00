@@ -1,0 +1,164 @@
+package dev.futurae.veilbound.platform.neoforge.inventory;
+
+import dev.futurae.veilbound.domain.DomainState;
+import dev.futurae.veilbound.inventory.VeilCraftingService;
+import dev.futurae.veilbound.inventory.VeilStackKey;
+import dev.futurae.veilbound.matter.MatterTransmutationState;
+import dev.futurae.veilbound.network.VeilCraftingPreviewPayload;
+import dev.futurae.veilbound.network.VeilCraftingRequestPayload;
+import dev.futurae.veilbound.runtime.VeilboundRuntime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import net.minecraft.core.NonNullList;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.CraftingInput;
+import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeType;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.transfer.item.ItemResource;
+
+/**
+ * Server-authoritative 3x3 terminal crafting. Ingredients may come from the player's normal
+ * inventory, exact non-Matter stacks in Veil storage, or learned Matter patterns, in that order.
+ */
+public final class NeoForgeVeilCraftingController {
+    private static final int PLAYER_STORAGE_SLOTS = 36;
+
+    private final VeilboundRuntime runtime;
+    private final NeoForgeVeilInventoryController inventoryController;
+    private final VeilCraftingService crafting = new VeilCraftingService();
+
+    public NeoForgeVeilCraftingController(
+            VeilboundRuntime runtime,
+            NeoForgeVeilInventoryController inventoryController) {
+        this.runtime = Objects.requireNonNull(runtime, "runtime");
+        this.inventoryController = Objects.requireNonNull(inventoryController, "inventoryController");
+    }
+
+    public void handle(ServerPlayer player, VeilCraftingRequestPayload payload) {
+        if (payload.action() == VeilCraftingRequestPayload.Action.CRAFT_MAX) {
+            Evaluation one = evaluate(player, payload.grid(), 1);
+            if (!one.craftable()) {
+                sendPreview(player, one);
+                return;
+            }
+            int perCraft = Math.max(1, one.resultCount());
+            int maxCrafts = Math.max(1, Math.min(
+                    VeilCraftingRequestPayload.MAX_CRAFT_QUANTITY,
+                    one.resultResource().getMaxStackSize() / perCraft));
+            Evaluation best = one;
+            for (int quantity = maxCrafts; quantity > 1; quantity--) {
+                Evaluation candidate = evaluate(player, payload.grid(), quantity);
+                if (candidate.craftable()) {
+                    best = candidate;
+                    break;
+                }
+            }
+            craft(player, payload.page(), payload.grid(), best);
+            return;
+        }
+
+        Evaluation evaluation = evaluate(player, payload.grid(), payload.quantity());
+        if (payload.action() == VeilCraftingRequestPayload.Action.CRAFT_ONCE && evaluation.craftable()) {
+            craft(player, payload.page(), payload.grid(), evaluation);
+            return;
+        }
+        sendPreview(player, evaluation);
+    }
+
+    private void craft(ServerPlayer player, int page, List<ItemResource> grid, Evaluation evaluation) {
+        Map<Integer, ItemStack> originals = snapshotPlayerSlots(player, evaluation.playerConsumption());
+        applyPlayerConsumption(player, evaluation.playerConsumption());
+
+        var result = crafting.craftWithMatter(
+                evaluation.state(), evaluation.inventory(), evaluation.capacity(),
+                evaluation.storageIngredients(), List.of(), evaluation.transmutation());
+        if (!result.crafted()) {
+            restorePlayerSlots(player, originals);
+            PacketDistributor.sendToPlayer(player, VeilCraftingPreviewPayload.denied(result.reason()));
+            return;
+        }
+
+        for (ItemStack stack : evaluation.deliveries()) {
+            deliverRepeated(player, stack, evaluation.craftQuantity());
+        }
+        try {
+            VeilStackKey resultKey = NeoForgeVeilStackBridge.toKey(evaluation.resultResource(), player.registryAccess());
+            if (resultKey.componentData().isEmpty() && evaluation.transmutation().knows(resultKey.itemId())) {
+                evaluation.transmutation().recordRecent(resultKey.itemId());
+            }
+        } catch (RuntimeException ignored) { }
+
+        inventoryController.sendSnapshot(player, page);
+        sendPreview(player, evaluate(player, grid, 1));
+    }
+
+    private static Map<Integer, ItemStack> snapshotPlayerSlots(ServerPlayer player, Map<Integer, Integer> consumption) {
+        LinkedHashMap<Integer, ItemStack> originals = new LinkedHashMap<>();
+        for (int slot : consumption.keySet()) {
+            originals.put(slot, player.getInventory().getItem(slot).copy());
+        }
+        return originals;
+    }
+
+    private static void applyPlayerConsumption(ServerPlayer player, Map<Integer, Integer> consumption) {
+        for (var entry : consumption.entrySet()) {
+            ItemStack stack = player.getInventory().getItem(entry.getKey());
+            if (stack.isEmpty() || stack.getCount() < entry.getValue()) {
+                throw new IllegalStateException("Player inventory changed after Veil crafting preflight");
+            }
+            stack.shrink(entry.getValue());
+        }
+        player.getInventory().setChanged();
+    }
+
+    private static void restorePlayerSlots(ServerPlayer player, Map<Integer, ItemStack> originals) {
+        for (var entry : originals.entrySet()) {
+            player.getInventory().setItem(entry.getKey(), entry.getValue());
+        }
+        player.getInventory().setChanged();
+    }
+
+    private static void deliver(ServerPlayer player, ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return;
+        player.getInventory().add(stack);
+        if (!stack.isEmpty()) player.drop(stack, false);
+    }
+
+    private static void deliverRepeated(ServerPlayer player, ItemStack template, int times) {
+        if (template == null || template.isEmpty() || times <= 0) return;
+        long total = Math.multiplyExact((long) template.getCount(), times);
+        int max = Math.max(1, template.getMaxStackSize());
+        while (total > 0) {
+            int count = (int) Math.min(total, max);
+            ItemStack next = template.copyWithCount(count);
+            deliver(player, next);
+            total -= count;
+        }
+    }
+
+    private void sendPreview(ServerPlayer player, Evaluation evaluation) {
+        if (!evaluation.craftable()) {
+            PacketDistributor.sendToPlayer(player, VeilCraftingPreviewPayload.denied(evaluation.reason()));
+            return;
+        }
+        PacketDistributor.sendToPlayer(player, new VeilCraftingPreviewPayload(
+                true, "ok", evaluation.resultResource(), evaluation.resultCount()));
+    }
+
+    private Evaluation evaluate(ServerPlayer player, List<ItemResource> proposedGrid, int craftQuantity) {
+        var access = runtime.veilInventoryAccess().ownerAccess(player.getUUID(), player.getUUID());
+        if (!access.allowed()) return Evaluation.denied(access.reason());
+
+        var record = runtime.domains().getRecord(player.getUUID()).orElse(null);
+        if (record == null) return Evaluation.denied("domain_not_found");
+        DomainState state = record.state();
+        if (proposedGrid == null || proposedGrid.size() != VeilCraftingRequestPayload.GRID_SIZE) {
+            return Evaluation.denied("invalid_grid");
+        }
+        craftQuantity = Math.max(1, Math.min(VeilCraftingRequestPayload.MAX_CRAFT_QUANTITY, craftQuantity));

@@ -1,0 +1,62 @@
+package dev.futurae.veilbound.inventory;
+
+import dev.futurae.veilbound.domain.CoreTier;
+import dev.futurae.veilbound.domain.DomainBounds;
+import dev.futurae.veilbound.domain.DomainPosition;
+import dev.futurae.veilbound.domain.DomainRecord;
+import dev.futurae.veilbound.domain.DomainRepository;
+import dev.futurae.veilbound.domain.DomainState;
+import java.util.UUID;
+
+public final class VeilInventorySelfTest {
+    public static void main(String[] args) {
+        UUID owner = UUID.randomUUID();
+        UUID guest = UUID.randomUUID();
+        DomainRepository domains = new DomainRepository();
+        DomainRecord record = domains.createRecord(owner, 7L);
+        DomainState state = record.state();
+        state.setBounds(new DomainBounds(-1, 0, -1, 1, 1, 1));
+        state.awakenCore(DomainPosition.ORIGIN);
+        state.setCoreTier(CoreTier.NASCENT);
+
+        VeilStoragePolicy policy = new VeilStoragePolicy();
+        VeilInventoryAccessService access = new VeilInventoryAccessService(domains, policy);
+        VeilInventoryAccessService.AccessResult ownerAccess = access.ownerAccess(owner, owner);
+        truth(ownerAccess.allowed(), "a bound Domain immediately unlocks its Veil Inventory");
+        truth(ownerAccess.capacity().equals(VeilStorageCapacity.EFFECTIVELY_UNLIMITED),
+                "first-release Domain storage is effectively unlimited");
+        truth(!access.ownerAccess(guest, owner).allowed(), "guests may not open another owner's Veil Inventory");
+        truth(!access.interfaceAccess(owner, false).allowed(), "Interface must stop when owner is offline");
+        truth(access.interfaceAccess(owner, true).allowed(), "Interface may transfer while owner is online");
+
+        VeilInventory inventory = ownerAccess.inventory();
+        VeilStackKey normal = VeilStackKey.plain("minecraft:stone");
+        VeilStackKey named = new VeilStackKey("minecraft:stone", "{minecraft:custom_name:'A'}");
+        eq(32, inventory.insert(normal, 32, ownerAccess.capacity()), "initial insert");
+        eq(12, inventory.insert(named, 12, ownerAccess.capacity()), "component-sensitive insert");
+        eq(2, inventory.distinctTypes(), "component variants are separate types");
+        eq(32, inventory.count(normal), "plain count");
+        eq(12, inventory.count(named), "component count");
+
+        VeilStackKey dirt = VeilStackKey.plain("minecraft:dirt");
+        eq(1_000_000, inventory.insert(dirt, 1_000_000, ownerAccess.capacity()),
+                "large physical unvalued counts fit without tier capacity gates");
+        eq(1, inventory.insert(VeilStackKey.plain("minecraft:cobblestone"), 1, ownerAccess.capacity()),
+                "additional stack types remain accepted");
+        eq(12, inventory.extract(named, 99), "extract clips to available count");
+        eq(0, inventory.count(named), "empty stack type is removed");
+
+        state.setCoreTier(CoreTier.RESONANT);
+        truth(policy.capacityFor(state).equals(VeilStorageCapacity.EFFECTIVELY_UNLIMITED),
+                "Core tier does not gate terminal capacity");
+        state.setCoreTier(CoreTier.TRANSCENDENT);
+        truth(policy.capacityFor(state).equals(VeilStorageCapacity.EFFECTIVELY_UNLIMITED),
+                "higher Core tiers keep the same unlimited terminal capacity");
+        System.out.println("VeilInventorySelfTest: PASS");
+    }
+
+    private static void eq(long expected, long actual, String message) {
+        if (expected != actual) throw new AssertionError(message + ": expected=" + expected + " actual=" + actual);
+    }
+    private static void truth(boolean value, String message) { if (!value) throw new AssertionError(message); }
+}

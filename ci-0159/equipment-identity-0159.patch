@@ -1,0 +1,154 @@
+diff -ruN vb0158src_exact/docs/0.1.59-validation.md vb0159src/docs/0.1.59-validation.md
+--- vb0158src_exact/docs/0.1.59-validation.md	1970-01-01 00:00:00.000000000 +0000
++++ vb0159src/docs/0.1.59-validation.md	2026-09-07 04:19:00.043909950 +0000
+@@ -0,0 +1,11 @@
++# Veilbound 0.1.59 validation
++
++0.1.59 gives the lower Veilforged armor tiers distinct active identities instead of relying only on passive mitigation.
++
++- Full Phaseweave converts ordinary fall impact into Core DE: 250 DE inside the owner Domain, 500 DE elsewhere.
++- Full Causal armor can reject a lethal ordinary post-mitigation hit for 50,000 DE, then enters a 600-tick (30 second) runtime cooldown.
++- Damage sources tagged to bypass invulnerability are intentionally excluded from both special defenses.
++- Existing Sovereign Domain flight and remote Core administration remain unchanged.
++- Both activations emit lightweight vanilla particles and action-bar feedback.
++
++Validation requires Java 25 compilation, packaged class/resource audits, and exact-JAR NeoForge 26.2.0.75 dedicated-server startup.
+diff -ruN vb0158src_exact/docs/player-guide.md vb0159src/docs/player-guide.md
+--- vb0158src_exact/docs/player-guide.md	2026-09-07 03:01:49.000000000 +0000
++++ vb0159src/docs/player-guide.md	2026-09-07 04:19:00.043775464 +0000
+@@ -111,7 +111,7 @@
+ - **Boundary Spade**: Precision or Terraform mode; Terraform removes a matching 3×3 plane and consumes DE per additional block.
+ - **Rift Cutter**: DE-backed spatial-shear damage.
+ - **Resonance Multitool**: diagnostics and configuration work for Veilbound machinery.
+-- **Phaseweave, Causal, Sovereign sets**: real humanoid armor with progressively stronger DE-backed mitigation and their own layered Veilbound worn-equipment textures. Full Sovereign Regalia grants creative-style flight while inside your own Domain; DE is drained only while actively flying. Wearing the full set also lets the Resonance Multitool open remote Core controls from anywhere inside that Domain.
++- **Phaseweave, Causal, Sovereign sets**: real humanoid armor with progressively stronger DE-backed mitigation, animated worn geometry, and animated energy/prism material layers. A full Phaseweave set can phase ordinary fall impact into Core DE (cheaper inside your own Domain). A full Causal set can reject a lethal ordinary hit by spending a large DE burst, then enters a 30-second causal recovery cooldown. Catastrophic damage that bypasses invulnerability is never rolled back. Full Sovereign Regalia grants creative-style flight while inside your own Domain; DE is drained only while actively flying. Wearing the full set also lets the Resonance Multitool open remote Core controls from anywhere inside that Domain.
+ 
+ Sovereign Regalia is intentionally a **post-Transcendent engineering project**, not an immediate reward for reaching the tier. Build Eventide Plates, Sovereign Servos, Regalia Cores, and Absolute Boundary Nodes first. The default Sovereign Chestplate final operation alone consumes 268,435,456 Matter and 160,000,000 DE, with the other pieces scaled similarly.
+ 
+diff -ruN vb0158src_exact/gradle.properties vb0159src/gradle.properties
+--- vb0158src_exact/gradle.properties	2026-09-07 03:46:56.000000000 +0000
++++ vb0159src/gradle.properties	2026-09-07 04:19:00.043959610 +0000
+@@ -8,7 +8,7 @@
+ mod_id=veilbound
+ mod_name=Veilbound
+ mod_license=All Rights Reserved
+-mod_version=0.1.58-dev
++mod_version=0.1.59-dev
+ mod_group_id=dev.futurae.veilbound
+ mod_authors=Futurae
+ mod_description=Build, stabilize, and govern a personal reality beyond the Veil.
+diff -ruN vb0158src_exact/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeVeilforgedEquipmentCoordinator.java vb0159src/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeVeilforgedEquipmentCoordinator.java
+--- vb0158src_exact/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeVeilforgedEquipmentCoordinator.java	2026-09-07 03:01:49.000000000 +0000
++++ vb0159src/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeVeilforgedEquipmentCoordinator.java	2026-09-07 04:19:00.042001701 +0000
+@@ -9,7 +9,9 @@
+ import dev.futurae.veilbound.runtime.VeilboundRuntime;
+ import dev.futurae.veilbound.network.DomainControlsSnapshotPayload;
+ import java.util.ArrayDeque;
++import java.util.HashMap;
+ import java.util.HashSet;
++import java.util.Map;
+ import java.util.Objects;
+ import java.util.Set;
+ import java.util.UUID;
+@@ -18,6 +20,7 @@
+ import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.network.chat.Component;
+ import net.minecraft.resources.Identifier;
++import net.minecraft.tags.DamageTypeTags;
+ import net.minecraft.server.level.ServerPlayer;
+ import net.minecraft.world.InteractionHand;
+ import net.minecraft.world.InteractionResult;
+@@ -25,6 +28,8 @@
+ import net.minecraft.world.item.ItemStack;
+ import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+ import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.core.particles.ParticleTypes;
++import net.minecraft.server.level.ServerLevel;
+ import net.neoforged.neoforge.event.entity.living.LivingDamageEvent;
+ import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+ import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
+@@ -35,9 +40,14 @@
+ public final class NeoForgeVeilforgedEquipmentCoordinator {
+     private static final Identifier SOVEREIGN_FLIGHT_MODIFIER = Identifier.fromNamespaceAndPath(Veilbound.MOD_ID, "sovereign_flight");
+     private static final long SOVEREIGN_FLIGHT_DE_PER_SECOND = 2_000L;
++    private static final long PHASEWEAVE_IMPACT_DE_INSIDE = 250L;
++    private static final long PHASEWEAVE_IMPACT_DE_OUTSIDE = 500L;
++    private static final long CAUSAL_ROLLBACK_DE_COST = 50_000L;
++    private static final long CAUSAL_ROLLBACK_COOLDOWN_TICKS = 600L;
+     private final VeilboundRuntime runtime;
+     private final NeoForgeDomainControlsController domainControls;
+     private final Set<UUID> toolOperationGuard = new HashSet<>();
++    private final Map<UUID, Long> causalRollbackReadyTick = new HashMap<>();
+     public NeoForgeVeilforgedEquipmentCoordinator(VeilboundRuntime runtime){
+         this.runtime=Objects.requireNonNull(runtime);
+         this.domainControls=new NeoForgeDomainControlsController(runtime);
+@@ -163,12 +173,57 @@
+         ArmorBand band=armorBand(defender);if(band==ArmorBand.NONE)return;
+         DomainRecord record=runtime.domains().getRecord(defender.getUUID()).orElse(null);if(record==null||!record.state().coreActive())return;
+         boolean insideOwn=record.identity().dimensionId().equals(defender.level().dimension().identifier().toString());
++
++        // Phaseweave's identity is impact phasing rather than simply being the weakest mitigation tier.
++        // A full set can collapse ordinary fall momentum into the owner's Core DE reserve. Catastrophic
++        // damage types that bypass invulnerability are deliberately outside this ability.
++        if(band==ArmorBand.PHASEWEAVE && event.getSource().is(DamageTypeTags.IS_FALL)
++                && !event.getSource().is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
++            long impactCost=insideOwn?PHASEWEAVE_IMPACT_DE_INSIDE:PHASEWEAVE_IMPACT_DE_OUTSIDE;
++            if(record.state().consumeDimensionalEnergy(impactCost)) {
++                event.setNewDamage(0F);
++                defender.sendSystemMessage(Component.translatable("message.veilbound.phaseweave.impact_phased",impactCost),true);
++                if(defender.level() instanceof ServerLevel serverLevel) {
++                    serverLevel.sendParticles(ParticleTypes.PORTAL, defender.getX(), defender.getY()+0.35D, defender.getZ(),
++                            18, 0.35D, 0.15D, 0.35D, 0.06D);
++                }
++                return;
++            }
++        }
++
+         long cost=switch(band){case PHASEWEAVE->75;case CAUSAL->250;case SOVEREIGN->insideOwn?400:600;default->0;};
+         float reduction=switch(band){case PHASEWEAVE->insideOwn?0.20F:0.10F;case CAUSAL->0.35F;case SOVEREIGN->insideOwn?0.55F:0.35F;default->0F;};
+         if(cost>0&&record.state().consumeDimensionalEnergy(cost))event.setNewDamage(Math.max(0F,event.getNewDamage()*(1F-reduction)));
++
++        // Causal armor gets a true causal identity: after ordinary mitigation, a lethal ordinary hit
++        // may be rolled back at a deliberately expensive DE cost. The cooldown is runtime-only; logout
++        // does not create stored timing state, while repeated hits in the same session cannot spam it.
++        if(band==ArmorBand.CAUSAL && event.getNewDamage()>=defender.getHealth()
++                && !event.getSource().is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
++            long now=defender.level().getGameTime();
++            long ready=causalRollbackReadyTick.getOrDefault(defender.getUUID(),Long.MIN_VALUE);
++            if(now>=ready && record.state().consumeDimensionalEnergy(CAUSAL_ROLLBACK_DE_COST)) {
++                event.setNewDamage(0F);
++                causalRollbackReadyTick.put(defender.getUUID(),safeAdd(now,CAUSAL_ROLLBACK_COOLDOWN_TICKS));
++                defender.sendSystemMessage(Component.translatable("message.veilbound.causal.rollback",
++                        CAUSAL_ROLLBACK_DE_COST,CAUSAL_ROLLBACK_COOLDOWN_TICKS/20L),true);
++                if(defender.level() instanceof ServerLevel serverLevel) {
++                    serverLevel.sendParticles(ParticleTypes.REVERSE_PORTAL, defender.getX(), defender.getY()+1.0D, defender.getZ(),
++                            32, 0.45D, 0.75D, 0.45D, 0.08D);
++                    serverLevel.sendParticles(ParticleTypes.END_ROD, defender.getX(), defender.getY()+1.0D, defender.getZ(),
++                            10, 0.25D, 0.45D, 0.25D, 0.02D);
++                }
++            }
++        }
+     }
+ 
+ 
++    private static long safeAdd(long a,long b){
++        if(b>0&&a>Long.MAX_VALUE-b)return Long.MAX_VALUE;
++        if(b<0&&a<Long.MIN_VALUE-b)return Long.MIN_VALUE;
++        return a+b;
++    }
++
+     private static int breakExtraBlocks(ServerPlayer player, BreakBlockEvent event, BlockState target, java.util.List<BlockPos> extras, DomainRecord record, long dePerBlock){
+         int broken=0;
+         for(BlockPos extra:extras){
+diff -ruN vb0158src_exact/src/main/resources/assets/veilbound/lang/en_us.json vb0159src/src/main/resources/assets/veilbound/lang/en_us.json
+--- vb0158src_exact/src/main/resources/assets/veilbound/lang/en_us.json	2026-09-07 03:01:50.000000000 +0000
++++ vb0159src/src/main/resources/assets/veilbound/lang/en_us.json	2026-09-07 04:19:00.043437507 +0000
+@@ -569,5 +569,7 @@
+   "codex.veilbound.monuments.6": "Horizon Stabilizer: 4,096 DE/s; repairs 1 fracture each second but does not seal an already-open Breach.",
+   "codex.veilbound.monuments.7": "Empty-hand use reports status. Sneak + empty hand toggles the field.",
+   "codex.veilbound.monuments.8": "Fields suspend on insufficient DE and vanish automatically when unloaded, invalid, disabled, or restarted.",
+-  "codex.veilbound.monuments.9": "Animated energy rings remain non-solid; bases, towers, cores, crowns and outriggers use fitted oversized collision."
++  "codex.veilbound.monuments.9": "Animated energy rings remain non-solid; bases, towers, cores, crowns and outriggers use fitted oversized collision.",
++  "message.veilbound.phaseweave.impact_phased": "Phaseweave displaced the impact into the Veil (%s DE).",
++  "message.veilbound.causal.rollback": "Causal rollback rejected a lethal outcome (%s DE, %ss recovery)."
+ }

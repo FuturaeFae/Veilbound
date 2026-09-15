@@ -1,0 +1,25 @@
+name: Inspect Veilbound 0.1.70 V8 Overlay
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev/veilbound-0.1.48-armor-models]
+    paths: ['.github/workflows/inspect-0170-v8-overlay.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export staged bytes as text
+        run: |
+          sha256sum ci-0170-v8/overlay.tar.gz > overlay-info.txt
+          wc -c ci-0170-v8/overlay.tar.gz >> overlay-info.txt
+          base64 -w 76 ci-0170-v8/overlay.tar.gz > overlay.b64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veil170-v8-overlay-inspect
+          path: |
+            overlay.b64
+            overlay-info.txt
+          retention-days: 1

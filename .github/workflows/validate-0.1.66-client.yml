@@ -1,0 +1,139 @@
+name: Validate Veilbound 0.1.66 Client
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  client-preflight-0166:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.2.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+
+      - name: Download exact validated 0.1.65 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: Veilbound-0.1.65-dev-final
+          path: baseline-0165
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: 34180073851
+
+      - name: Reconstruct hardened 0.1.66 client source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "fcc75b3e44c609218dce4e21a627de9a7cf150a1e614b9529c80845641fcd041  baseline-0165/Veilbound-0.1.65-dev-source.tar.xz" | sha256sum -c -
+          test "$(find ci-0166/chunks -maxdepth 1 -type f -name 'part*' | wc -l)" -eq 13
+          mkdir -p source-0166
+          tar -xJf baseline-0165/Veilbound-0.1.65-dev-source.tar.xz -C source-0166
+          python3 ci-0166/apply-0166.py source-0166
+
+      - name: Audit first-release acceptance surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=source-0166
+          ADMIN="$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/NeoForgeDomainAdminCommandCoordinator.java"
+          LANG="$ROOT/src/main/resources/assets/veilbound/lang/en_us.json"
+          grep -q 'GenesisSeedService.bind' "$ADMIN"
+          grep -q 'IntegerArgumentType.integer(3)' "$ADMIN"
+          ! grep -q 'Commands.literal("awaken")' "$ADMIN"
+          ! grep -q 'Commands.literal("sovereignty")' "$ADMIN"
+          ! grep -q 'Commands.literal("memory")' "$ADMIN"
+          ! grep -q 'Commands.literal("milestone")' "$ADMIN"
+          ! grep -q 'Commands.literal("feature")' "$ADMIN"
+          grep -q '"container.veilbound.boundary_dynamo": "Boundary Dynamo"' "$LANG"
+          grep -q 'VEILBOUND_0166_FIRST_RELEASE_SELF_TESTS' "$ROOT/build.gradle"
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          root=Path('source-0166/src/main/resources')
+          lang=json.loads((root/'assets/veilbound/lang/en_us.json').read_text())
+          blocks={
+              'dimensional_core','dimensional_transducer','resonant_transducer','phase_transducer','causal_transducer',
+              'boundary_dynamo','void_anchor','dimensional_shard_ore','deepslate_dimensional_shard_ore',
+              'resonant_accretion','phase_accretion','causal_accretion'
+          }
+          items={
+              'genesis_seed','dimensional_shard','dimensional_transducer','resonant_transducer','phase_transducer',
+              'causal_transducer','boundary_dynamo','void_anchor','dimensional_shard_ore',
+              'deepslate_dimensional_shard_ore','resonant_accretion','phase_accretion','causal_accretion'
+          }
+          for block in blocks:
+              assert (root/f'assets/veilbound/blockstates/{block}.json').is_file(), block
+              assert (root/f'assets/veilbound/models/block/{block}.json').is_file(), block
+              assert f'block.veilbound.{block}' in lang, block
+          for item in items:
+              assert (root/f'assets/veilbound/items/{item}.json').is_file(), item
+              if item not in blocks:
+                  assert f'item.veilbound.{item}' in lang, item
+          recipes=list((root/'data/veilbound/recipe').glob('*.json'))
+          assert len(recipes)==7
+          registered=items
+          for recipe in recipes:
+              data=json.loads(recipe.read_text())
+              result=data['result']['id']
+              assert result.startswith('veilbound:')
+              assert result.split(':',1)[1] in registered, (recipe.name,result)
+          print('VEILBOUND_0166_ACCEPTANCE_SURFACE=PASS blocks=12 items=13 recipes=7 dynamo_title=translated admin=slim')
+          PY
+
+      - name: Xvfb Minecraft client boot and resource smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq xvfb
+          fi
+          cd source-0166
+          set +e
+          timeout -k 15s 180s xvfb-run -a gradle --no-daemon runClient > "$GITHUB_WORKSPACE/05-client-smoke-0166.log" 2>&1
+          CODE=$?
+          set -e
+          if [ "$CODE" -ne 0 ] && [ "$CODE" -ne 124 ]; then
+            tail -n 300 "$GITHUB_WORKSPACE/05-client-smoke-0166.log" || true
+            exit "$CODE"
+          fi
+          LOG=run/logs/latest.log
+          test -s "$LOG"
+          grep -Eiq 'LWJGL|OpenGL|Reloading ResourceManager|Backend library' "$LOG"
+          if grep -Eiq 'Crash report|Exception in thread "Render thread"|ModLoadingException|Failed to create window|Could not initialize GLFW' "$LOG"; then
+            tail -n 300 "$LOG" || true
+            exit 1
+          fi
+          if grep -Eiq '(missing|failed|error).{0,160}veilbound|veilbound.{0,160}(missing|failed|error)' "$LOG"; then
+            tail -n 300 "$LOG" || true
+            exit 1
+          fi
+          cp "$LOG" "$GITHUB_WORKSPACE/Veilbound-0.1.66-dev-client-smoke.log"
+          echo VEILBOUND_0166_CLIENT_SMOKE=PASS
+
+      - name: Upload client preflight diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Veilbound-0.1.66-dev-client-preflight
+          path: |
+            05-client-smoke-0166.log
+            Veilbound-0.1.66-dev-client-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
