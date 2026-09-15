@@ -1,0 +1,27 @@
+name: Inspect Veilbound Reference Assets
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev/veilbound-0.1.48-armor-models]
+    paths: ['.github/workflows/inspect-0169-ref-assets.yml']
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover reference assets
+        run: |
+          python3 ci-0169/recover-reference-assets.py
+          mkdir recovered
+          tar -xzf veil169-reference-assets.tar.gz -C recovered
+          find recovered -type f -printf '%P\n' | sort | tee reference-files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veil169-reference-assets-inspect
+          path: |
+            veil169-reference-assets.tar.gz
+            reference-files.txt
+            recovered
+          retention-days: 1
