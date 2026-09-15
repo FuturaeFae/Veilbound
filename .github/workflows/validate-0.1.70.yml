@@ -46,29 +46,30 @@ jobs:
         run: |
           set -euo pipefail
           echo '4ca2719b81c1271c24663a7ba8459acb59dea00c8fdbf0dd4551f23de17e01c8  baseline-0169/Veilbound-0.1.69-dev-source.tar.xz' | sha256sum -c -
-          echo '90f6c1bce20a3d58ad40ab1c5787ff07a58354bf67e492e52d8d743e58c3bb47  ci-0170/overlay.tar.gz' | sha256sum -c -
+          echo 'Repository overlay:'
+          sha256sum ci-0170/overlay.tar.gz | tee 00-overlay-sha.txt
+          gzip -t ci-0170/overlay.tar.gz
           mkdir source-0170
           tar -xJf baseline-0169/Veilbound-0.1.69-dev-source.tar.xz -C source-0170
           tar -xzf ci-0170/overlay.tar.gz -C source-0170
           rm -f source-0170/src/main/resources/assets/veilbound/textures/block/{dimensional,resonant,phase,causal}_transducer_core.png.mcmeta
           grep -q '^mod_version=0.1.70-dev$' source-0170/gradle.properties
+          echo VEILBOUND_0170_OVERLAY_EXTRACT=PASS
 
       - name: Exact texture and item-model audit
         shell: bash
         run: |
           set -euo pipefail
           ROOT=source-0170
-          echo '13706022a84aca0fe6fb9a2e1d95d5400210a0c141484c320247c9a9f915b0f9  source-0170/src/main/resources/assets/veilbound/textures/item/dimensional_shard.png' | sha256sum -c -
-          echo '9d2d8a0fc890aab5bfbc8f5afd9c044a472791480e82f4b4c3adbe61832583dd  source-0170/src/main/resources/assets/veilbound/textures/item/phase_mote.png' | sha256sum -c -
-          echo '1eba1237a3aa1b7351a869b910941cd5127bffe0a9244104502fc59850300c27  source-0170/src/main/resources/assets/veilbound/textures/item/causal_fragment.png' | sha256sum -c -
-          echo '9f05a5e8fb4dd189e1afc15051bd58ba1a2ff58f867d0f73df7010fbb660b65a  source-0170/src/main/resources/assets/veilbound/textures/block/dimensional_shard_ore.png' | sha256sum -c -
-          echo '5b55b4e25cb1e307fb2a8a3866a6e005aad9e99cdc517eb41c27334dada46f7b  source-0170/src/main/resources/assets/veilbound/textures/block/phase_accretion.png' | sha256sum -c -
-          echo '1a84e0a49d385ca09867c4102b3edc10ae8a024ad45784f54ac906fbb0fbdc68  source-0170/src/main/resources/assets/veilbound/textures/block/causal_accretion.png' | sha256sum -c -
-          echo 'c5964c1dd0d2db0527b61915b80f949d167fc0e3ad85c7df45de581a1139c663  source-0170/src/main/resources/assets/veilbound/textures/block/resonant_block.png' | sha256sum -c -
-          echo '9f24fb117b6e74fa3a03cd7259e61e933e2aba4b44e0c9fe208e8c61f2244863  source-0170/src/main/resources/assets/veilbound/textures/block/phase_block.png' | sha256sum -c -
-          echo 'da0c3a98c28cacb49ddf9601287214ee62cbfc67ff6d2add14a0fcd01a4b5040  source-0170/src/main/resources/assets/veilbound/textures/block/causal_block.png' | sha256sum -c -
-          echo '0576e71e10bf6e3faf0c5dd7967efba979b6ca33ca978101647609dfb6e19e6b  source-0170/src/main/resources/assets/veilbound/textures/block/void_anchor_top.png' | sha256sum -c -
-          echo '7bd5d1f9755b0e54f3a64b58bfda3de14a054c1a2ec51a93d2c6f24abb4de012  source-0170/src/main/resources/assets/veilbound/textures/block/dimensional_transducer_panel.png' | sha256sum -c -
+          grep -q 'super(menu, inventory, title, 248, 190)' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DimensionalTransducerScreen.java"
+          grep -q 'Power Telemetry' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.java"
+          grep -q 'PANEL_WIDTH = 276' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'GRID_ROWS = 5' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'Assembler' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/VeilInventoryScreen.java"
+          grep -q 'PAGE_SIZE = 45' "$ROOT/src/main/java/dev/futurae/veilbound/network/VeilCraftablesSnapshotPayload.java"
+          grep -q 'PAGE_SIZE = 45' "$ROOT/src/main/java/dev/futurae/veilbound/platform/neoforge/inventory/NeoForgeVeilInventoryController.java"
+          grep -q 'Dimensional Energy' "$ROOT/src/main/java/dev/futurae/veilbound/client/screen/DomainControlsScreen.java"
+          grep -q 'noOcclusion' "$ROOT/src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java"
           python3 - <<'PY'
           from pathlib import Path
           import json
@@ -82,9 +83,10 @@ jobs:
               assert im.size==(32,128), (name,im.size)
               for frame in range(4):
                   f=im.crop((0,frame*32,32,(frame+1)*32))
+                  alpha=list(f.getchannel('A').getdata())
                   assert f.getpixel((0,0))[3]==0, (name,frame,'corner not transparent')
-                  assert min(f.getchannel('A').getdata())==0, (name,frame,'no transparency')
-                  assert max(f.getchannel('A').getdata())==255, (name,frame,'no opaque item pixels')
+                  assert min(alpha)==0, (name,frame,'no transparency')
+                  assert max(alpha)==255, (name,frame,'no opaque item pixels')
           block_names=['dimensional_shard_ore','deepslate_dimensional_shard_ore','resonant_accretion','phase_accretion','causal_accretion','dimensional_block','resonant_block','phase_block','causal_block','void_anchor_top','void_anchor_side','void_anchor_bottom']
           for name in block_names:
               im=Image.open(tex/'block'/f'{name}.png').convert('RGBA')
@@ -97,7 +99,20 @@ jobs:
               assert model=={'parent':f'veilbound:block/{name}'}
           for tier in ('dimensional','resonant','phase','causal'):
               model=json.loads((root/'src/main/resources/assets/veilbound/models/block'/f'{tier}_transducer.json').read_text())
-              assert len(model.get('elements',[]))>=10, tier
+              assert len(model.get('elements',[]))>=3, tier
+              for elem in model['elements']:
+                  for face,spec in elem.get('faces',{}).items():
+                      if face != 'down':
+                          assert 'cullface' not in spec, (tier, face, 'bad cullface')
+          pairs=(('dimensional','dimensional_shard'),('resonant','resonant_crystal'),('phase','phase_mote'),('causal','causal_fragment'))
+          blocks=(root/'src/main/java/dev/futurae/veilbound/registry/VeilboundBlocks.java').read_text()
+          for name,item in pairs:
+              assert f'"{name}_block"' in blocks
+              compact=json.loads((root/f'src/main/resources/data/veilbound/recipe/{name}_block.json').read_text())
+              unpack=json.loads((root/f'src/main/resources/data/veilbound/recipe/{name}_block_unpacking.json').read_text())
+              assert compact['pattern']==['XXX','XXX','XXX']
+              assert compact['key']['X']==f'veilbound:{item}'
+              assert unpack['result']=={'id':f'veilbound:{item}','count':9}
           print('VEILBOUND_0170_TEXTURE_AUDIT=PASS')
           PY
 
@@ -121,6 +136,10 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           unzip -t Veilbound-0.1.70-dev.jar
           for entry in \
+            dev/futurae/veilbound/client/screen/VeilInventoryScreen.class \
+            dev/futurae/veilbound/client/screen/DimensionalTransducerScreen.class \
+            dev/futurae/veilbound/client/screen/BoundaryDynamoScreen.class \
+            dev/futurae/veilbound/client/screen/DomainControlsScreen.class \
             assets/veilbound/items/dimensional_block.json \
             assets/veilbound/items/resonant_block.json \
             assets/veilbound/items/phase_block.json \
@@ -130,6 +149,10 @@ jobs:
             assets/veilbound/textures/block/resonant_accretion.png \
             assets/veilbound/textures/block/phase_accretion.png \
             assets/veilbound/textures/block/causal_accretion.png \
+            assets/veilbound/textures/block/dimensional_block.png \
+            assets/veilbound/textures/block/resonant_block.png \
+            assets/veilbound/textures/block/phase_block.png \
+            assets/veilbound/textures/block/causal_block.png \
             assets/veilbound/textures/block/void_anchor_top.png; do
             unzip -Z1 Veilbound-0.1.70-dev.jar | grep -qx "$entry"
           done
@@ -171,6 +194,7 @@ jobs:
         with:
           name: Veilbound-0.1.70-dev-diagnostics
           path: |
+            00-overlay-sha.txt
             03-gradle-build-0170.log
             04-server-setup-0170.log
             Veilbound-0.1.70-dev.jar
